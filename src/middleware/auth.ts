@@ -1,0 +1,359 @@
+import { Request, Response, NextFunction } from "express";
+import jwt from "jsonwebtoken";
+import { PrismaClient } from "@prisma/client";
+import { env } from "../config/environment";
+import { logSecurity } from "../config/logger";
+
+const prisma = new PrismaClient();
+
+// Extend Express Request interface
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: string;
+        email: string;
+        username: string;
+        role: string;
+        iat?: number;
+        exp?: number;
+      };
+    }
+  }
+}
+
+// JWT Token payload interface
+interface JWTPayload {
+  id: string;
+  email: string;
+  username: string;
+  role: string;
+  iat?: number;
+  exp?: number;
+}
+
+// Generate JWT token
+export const generateToken = (user: {
+  id: string;
+  email: string;
+  username: string;
+  role?: string;
+}): string => {
+  const payload = {
+    id: user.id,
+    email: user.email,
+    username: user.username,
+    role: user.role || "user",
+  };
+
+  const options: jwt.SignOptions = {
+    expiresIn: env.JWT_EXPIRE as any,
+    issuer: "nhandare-backend",
+    audience: "nhandare-users",
+  };
+
+  return jwt.sign(payload, env.JWT_SECRET, options);
+};
+
+// Verify JWT token
+export const verifyToken = (token: string): JWTPayload | null => {
+  try {
+    const decoded = jwt.verify(token, env.JWT_SECRET, {
+      issuer: "nhandare-backend",
+      audience: "nhandare-users",
+    }) as JWTPayload;
+    return decoded;
+  } catch (error) {
+    return null;
+  }
+};
+
+// Authentication middleware
+export const authenticate = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      logSecurity("Missing or invalid authorization header", {
+        ip: req.ip,
+        userAgent: req.get("User-Agent"),
+        url: req.url,
+      });
+
+      res.status(401).json({
+        success: false,
+        message: "Access token required",
+      });
+      return;
+    }
+
+    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+    const decoded = verifyToken(token);
+
+    if (!decoded) {
+      logSecurity("Invalid or expired token", {
+        ip: req.ip,
+        userAgent: req.get("User-Agent"),
+        url: req.url,
+      });
+
+      res.status(401).json({
+        success: false,
+        message: "Invalid or expired token",
+      });
+      return;
+    }
+
+    // Verify user still exists and is active
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        isActive: true,
+        lastLogin: true,
+      },
+    });
+
+    if (!user || !user.isActive) {
+      logSecurity("Token user not found or inactive", {
+        ip: req.ip,
+        userAgent: req.get("User-Agent"),
+        url: req.url,
+        userId: decoded.id,
+      });
+
+      res.status(401).json({
+        success: false,
+        message: "User account not found or inactive",
+      });
+      return;
+    }
+
+    // Attach user to request
+    req.user = {
+      id: decoded.id,
+      email: decoded.email,
+      username: decoded.username,
+      role: decoded.role,
+      iat: decoded.iat,
+      exp: decoded.exp,
+    };
+
+    next();
+  } catch (error) {
+    logSecurity("Authentication error", {
+      error: error instanceof Error ? error.message : "Unknown error",
+      ip: req.ip,
+      userAgent: req.get("User-Agent"),
+      url: req.url,
+    });
+
+    res.status(500).json({
+      success: false,
+      message: "Authentication error",
+    });
+    return;
+  }
+};
+
+// Optional authentication (doesn't require token)
+export const optionalAuth = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return next(); // Continue without authentication
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = verifyToken(token);
+
+    if (decoded) {
+      // Verify user exists
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.id },
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          isActive: true,
+        },
+      });
+
+      if (user && user.isActive) {
+        req.user = {
+          id: decoded.id,
+          email: decoded.email,
+          username: decoded.username,
+          role: decoded.role,
+          iat: decoded.iat,
+          exp: decoded.exp,
+        };
+      }
+    }
+
+    next();
+  } catch (error) {
+    // Silently fail for optional auth
+    next();
+  }
+};
+
+// Role-based authorization
+export const authorize = (roles: string[]) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+      return;
+    }
+
+    if (!roles.includes(req.user.role)) {
+      logSecurity("Insufficient permissions", {
+        ip: req.ip,
+        userAgent: req.get("User-Agent"),
+        url: req.url,
+        userId: req.user.id,
+        userRole: req.user.role,
+        requiredRoles: roles,
+      });
+
+      res.status(403).json({
+        success: false,
+        message: "Insufficient permissions",
+      });
+      return;
+    }
+
+    next();
+  };
+};
+
+// Admin only authorization
+export const adminOnly = authorize(["admin"]);
+
+// Moderator or admin authorization
+export const moderatorOrAdmin = authorize(["moderator", "admin"]);
+
+// User ownership check (user can only access their own resources)
+export const checkOwnership = (userIdParam: string = "userId") => {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+      return;
+    }
+
+    const resourceUserId = req.params[userIdParam];
+
+    // Admin can access any resource
+    if (req.user.role === "admin") {
+      next();
+      return;
+    }
+
+    // User can only access their own resources
+    if (req.user.id !== resourceUserId) {
+      logSecurity("Unauthorized resource access attempt", {
+        ip: req.ip,
+        userAgent: req.get("User-Agent"),
+        url: req.url,
+        userId: req.user.id,
+        resourceUserId,
+      });
+
+      res.status(403).json({
+        success: false,
+        message: "Access denied: You can only access your own resources",
+      });
+      return;
+    }
+
+    next();
+  };
+};
+
+// Refresh token middleware
+export const refreshToken = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      res.status(400).json({
+        success: false,
+        message: "Refresh token required",
+      });
+      return;
+    }
+
+    const decoded = verifyToken(refreshToken);
+
+    if (!decoded) {
+      res.status(401).json({
+        success: false,
+        message: "Invalid refresh token",
+      });
+      return;
+    }
+
+    // Verify user exists and is active
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        isActive: true,
+      },
+    });
+
+    if (!user || !user.isActive) {
+      res.status(401).json({
+        success: false,
+        message: "User not found or inactive",
+      });
+      return;
+    }
+
+    // Generate new token
+    const newToken = generateToken({
+      id: user.id,
+      email: user.email,
+      username: user.username,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        token: newToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+        },
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Token refresh failed",
+    });
+  }
+};
