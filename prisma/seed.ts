@@ -1,5 +1,7 @@
+/// <reference types="node" />
 import { PrismaClient } from "@prisma/client";
-import bcrypt from "bcryptjs";
+import { TournamentCategory, AchievementType } from "@prisma/client";
+import * as bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
@@ -204,17 +206,6 @@ async function main() {
       },
     },
     {
-      name: "OneMoney",
-      code: "PZW212",
-      minAmount: 1.0,
-      maxAmount: 1000.0,
-      feeStructure: {
-        type: "percentage",
-        rate: 0.015,
-        minimumFee: 0.05,
-      },
-    },
-    {
       name: "Zimswitch USD",
       code: "PZW215",
       minAmount: 0.1,
@@ -405,7 +396,7 @@ async function main() {
       venue: "University of Zimbabwe Main Hall",
       isOnlineOnly: false,
       targetAudience: "university",
-      category: "UNIVERSITY" as const,
+      category: TournamentCategory.UNIVERSITY,
       difficultyLevel: "intermediate",
       localCurrency: "USD",
       registrationStart: new Date("2024-02-01T09:00:00Z"),
@@ -430,7 +421,7 @@ async function main() {
       location: "Bulawayo City Centre",
       isOnlineOnly: true,
       targetAudience: "public",
-      category: "PUBLIC",
+      category: TournamentCategory.PUBLIC,
       difficultyLevel: "beginner",
       localCurrency: "USD",
       registrationStart: new Date("2024-02-05T09:00:00Z"),
@@ -458,7 +449,7 @@ async function main() {
       name: "First Victory",
       description: "Win your first game",
       icon: "🎉",
-      type: "GAMES_WON",
+      type: AchievementType.GAMES_WON,
       requirements: { gamesWon: 1 },
       points: 50,
     },
@@ -466,7 +457,7 @@ async function main() {
       name: "Chess Master",
       description: "Win 10 chess games",
       icon: "♟️",
-      type: "GAMES_WON",
+      type: AchievementType.GAMES_WON,
       requirements: { gamesWon: 10, gameType: "Chess" },
       points: 200,
     },
@@ -474,7 +465,7 @@ async function main() {
       name: "Tournament Champion",
       description: "Win your first tournament",
       icon: "🏆",
-      type: "TOURNAMENTS_WON",
+      type: AchievementType.TOURNAMENTS_WON,
       requirements: { tournamentsWon: 1 },
       points: 500,
     },
@@ -482,7 +473,7 @@ async function main() {
       name: "Zimbabwe Pride",
       description: "Represent Zimbabwe in 5 tournaments",
       icon: "🇿🇼",
-      type: "PARTICIPATION",
+      type: AchievementType.PARTICIPATION,
       requirements: { tournamentsJoined: 5 },
       points: 300,
     },
@@ -490,7 +481,7 @@ async function main() {
       name: "Rising Star",
       description: "Reach 1500 rating",
       icon: "⭐",
-      type: "RATING_MILESTONE",
+      type: AchievementType.RATING_MILESTONE,
       requirements: { rating: 1500 },
       points: 400,
     },
@@ -502,7 +493,21 @@ async function main() {
 
   // 8. Create game statistics for users
   console.log("📊 Creating game statistics...");
-  const gameStats = [];
+  const gameStats: Array<{
+    userId: string;
+    gameId: string;
+    gamesPlayed: number;
+    gamesWon: number;
+    gamesLost: number;
+    gamesDrawn: number;
+    winRate: number;
+    averageScore: number;
+    bestScore: number;
+    totalPlayTime: number;
+    currentRating: number;
+    peakRating: number;
+  }> = [];
+
   for (const user of createdUsers.slice(0, 3)) {
     // Skip admin user
     for (const game of createdGames) {
