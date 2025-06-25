@@ -30,6 +30,7 @@ import tournamentRoutes from "./routes/tournaments";
 import matchRoutes from "./routes/matches";
 import leaderboardRoutes from "./routes/leaderboard";
 import paymentRoutes from "./routes/payments";
+import zimbabweRoutes from "./routes/zimbabwe";
 
 // Import socket handlers
 import { initializeSocket } from "./socket";
@@ -126,6 +127,7 @@ app.use("/api/tournaments", tournamentRoutes);
 app.use("/api/matches", matchRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/zimbabwe", zimbabweRoutes);
 
 // Initialize socket handlers
 initializeSocket(io);

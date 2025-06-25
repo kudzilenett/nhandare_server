@@ -1,14 +1,656 @@
-import { Router } from "express";
+import { Router, Request, Response } from "express";
+import { prisma } from "../config/database";
+import { authenticate, adminOnly, optionalAuth } from "../middleware/auth";
+import {
+  validateSchema,
+  validateQuery,
+  validateParams,
+  schemas,
+  paramSchemas,
+} from "../middleware/validation";
+import { asyncHandler, createError } from "../middleware/errorHandler";
+import logger from "../config/logger";
 
 const router = Router();
 
-// Get all tournaments
-router.get("/", (req, res) => {
-  res.json({
-    success: true,
-    message: "Tournaments endpoint - Coming soon",
-    data: { tournaments: [] },
-  });
-});
+// GET /api/tournaments - Get all tournaments with Zimbabwe filtering
+router.get(
+  "/",
+  validateQuery(schemas.pagination),
+  asyncHandler(async (req: Request, res: Response) => {
+    const {
+      page = 1,
+      limit = 20,
+      sortBy = "createdAt",
+      sortOrder = "desc",
+      province,
+      city,
+      category,
+      status,
+      gameType,
+      minPrize,
+      maxPrize,
+      targetAudience,
+    } = req.query as any;
+
+    const skip = (page - 1) * limit;
+
+    // Build filter conditions
+    const where: any = {};
+
+    if (province) where.province = province;
+    if (city) where.city = city;
+    if (category) where.category = category;
+    if (status) where.status = status;
+    if (gameType)
+      where.game = { name: { contains: gameType, mode: "insensitive" } };
+    if (targetAudience) where.targetAudience = targetAudience;
+    if (minPrize)
+      where.prizePool = { ...where.prizePool, gte: parseFloat(minPrize) };
+    if (maxPrize)
+      where.prizePool = { ...where.prizePool, lte: parseFloat(maxPrize) };
+
+    // Get tournaments with counts
+    const [tournaments, total] = await Promise.all([
+      prisma.tournament.findMany({
+        skip,
+        take: limit,
+        where,
+        orderBy: {
+          [sortBy]: sortOrder,
+        },
+        include: {
+          game: {
+            select: {
+              id: true,
+              name: true,
+              emoji: true,
+              minPlayers: true,
+              maxPlayers: true,
+            },
+          },
+          _count: {
+            select: {
+              players: true,
+              matches: true,
+            },
+          },
+        },
+      }),
+      prisma.tournament.count({ where }),
+    ]);
+
+    // Calculate pagination
+    const totalPages = Math.ceil(total / limit);
+    const hasNextPage = page < totalPages;
+    const hasPreviousPage = page > 1;
+
+    res.json({
+      success: true,
+      data: {
+        tournaments: tournaments.map((tournament) => ({
+          ...tournament,
+          stats: {
+            totalPlayers: tournament._count.players,
+            totalMatches: tournament._count.matches,
+            spotsRemaining: tournament.maxPlayers - tournament.currentPlayers,
+          },
+        })),
+        pagination: {
+          currentPage: page,
+          totalPages,
+          totalItems: total,
+          hasNextPage,
+          hasPreviousPage,
+          limit,
+        },
+      },
+    });
+  })
+);
+
+// GET /api/tournaments/:id - Get tournament by ID with detailed information
+router.get(
+  "/:id",
+  validateParams(paramSchemas.id),
+  optionalAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const userId = req.user?.id;
+
+    const tournament = await prisma.tournament.findUnique({
+      where: { id },
+      include: {
+        game: true,
+        players: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                avatar: true,
+                province: true,
+                city: true,
+              },
+            },
+          },
+        },
+        _count: {
+          select: {
+            players: true,
+            matches: true,
+          },
+        },
+      },
+    });
+
+    if (!tournament) {
+      res.status(404).json({
+        success: false,
+        message: "Tournament not found",
+      });
+      return;
+    }
+
+    // Check if user is registered
+    let userRegistration = null;
+    if (userId) {
+      userRegistration = await prisma.tournamentPlayer.findUnique({
+        where: {
+          userId_tournamentId: {
+            userId,
+            tournamentId: id,
+          },
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        tournament: {
+          ...tournament,
+          stats: {
+            totalPlayers: tournament._count.players,
+            totalMatches: tournament._count.matches,
+            spotsRemaining: tournament.maxPlayers - tournament.currentPlayers,
+          },
+          userRegistration,
+        },
+      },
+    });
+  })
+);
+
+// POST /api/tournaments - Create new tournament (authenticated users only)
+router.post(
+  "/",
+  authenticate,
+  validateSchema(schemas.tournament),
+  asyncHandler(async (req: Request, res: Response) => {
+    const {
+      title,
+      description,
+      gameId,
+      entryFee,
+      prizePool,
+      maxPlayers,
+      province,
+      city,
+      location,
+      venue,
+      isOnlineOnly,
+      targetAudience,
+      sponsorName,
+      minimumAge,
+      maxAge,
+      category,
+      difficultyLevel,
+      prizeBreakdown,
+      localCurrency,
+      platformFeeRate,
+      registrationStart,
+      registrationEnd,
+      startDate,
+      endDate,
+      bracketType,
+    } = req.body;
+
+    // Verify game exists
+    const game = await prisma.game.findUnique({
+      where: { id: gameId },
+    });
+
+    if (!game) {
+      res.status(400).json({
+        success: false,
+        message: "Game not found",
+      });
+      return;
+    }
+
+    // Validate business rules
+    if (entryFee < 1 || entryFee > 100) {
+      res.status(400).json({
+        success: false,
+        message: "Entry fee must be between $1 and $100 USD",
+      });
+      return;
+    }
+
+    if (prizePool < entryFee * maxPlayers * 0.7) {
+      res.status(400).json({
+        success: false,
+        message: "Prize pool must be at least 70% of total entry fees",
+      });
+      return;
+    }
+
+    const tournament = await prisma.tournament.create({
+      data: {
+        title,
+        description,
+        gameId,
+        entryFee,
+        prizePool,
+        maxPlayers,
+        province,
+        city,
+        location: location || `${city}, ${province}`,
+        venue,
+        isOnlineOnly: isOnlineOnly ?? true,
+        targetAudience,
+        sponsorName,
+        minimumAge,
+        maxAge,
+        category,
+        difficultyLevel,
+        prizeBreakdown,
+        localCurrency: localCurrency || "USD",
+        platformFeeRate: platformFeeRate || 0.2,
+        registrationStart: new Date(registrationStart),
+        registrationEnd: new Date(registrationEnd),
+        startDate: new Date(startDate),
+        endDate: endDate ? new Date(endDate) : null,
+        bracketType: bracketType || "SINGLE_ELIMINATION",
+      },
+      include: {
+        game: true,
+      },
+    });
+
+    logger.info("Tournament created", {
+      service: "nhandare-backend",
+      tournamentId: tournament.id,
+      title: tournament.title,
+      createdBy: req.user!.id,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Tournament created successfully",
+      data: { tournament },
+    });
+  })
+);
+
+// POST /api/tournaments/:id/join - Join tournament with payment
+router.post(
+  "/:id/join",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const userId = req.user!.id;
+
+    // Check if tournament exists and is open
+    const tournament = await prisma.tournament.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: { players: true },
+        },
+      },
+    });
+
+    if (!tournament) {
+      res.status(404).json({
+        success: false,
+        message: "Tournament not found",
+      });
+      return;
+    }
+
+    if (tournament.status !== "OPEN") {
+      res.status(400).json({
+        success: false,
+        message: "Tournament registration is closed",
+      });
+      return;
+    }
+
+    if (tournament._count.players >= tournament.maxPlayers) {
+      res.status(400).json({
+        success: false,
+        message: "Tournament is full",
+      });
+      return;
+    }
+
+    // Check if user is already registered
+    const existingRegistration = await prisma.tournamentPlayer.findUnique({
+      where: {
+        userId_tournamentId: {
+          userId,
+          tournamentId: id,
+        },
+      },
+    });
+
+    if (existingRegistration) {
+      res.status(400).json({
+        success: false,
+        message: "You are already registered for this tournament",
+      });
+      return;
+    }
+
+    // Create tournament player registration
+    const tournamentPlayer = await prisma.tournamentPlayer.create({
+      data: {
+        userId,
+        tournamentId: id,
+        isActive: true,
+      },
+    });
+
+    // Update tournament player count
+    await prisma.tournament.update({
+      where: { id },
+      data: {
+        currentPlayers: {
+          increment: 1,
+        },
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Successfully joined tournament",
+      data: { registration: tournamentPlayer },
+    });
+  })
+);
+
+// DELETE /api/tournaments/:id/leave - Leave tournament (with refund logic)
+router.delete(
+  "/:id/leave",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const userId = req.user!.id;
+
+    // Check if user is registered
+    const registration = await prisma.tournamentPlayer.findUnique({
+      where: {
+        userId_tournamentId: {
+          userId,
+          tournamentId: id,
+        },
+      },
+      include: {
+        tournament: true,
+      },
+    });
+
+    if (!registration) {
+      res.status(404).json({
+        success: false,
+        message: "You are not registered for this tournament",
+      });
+      return;
+    }
+
+    if (registration.tournament.status === "ACTIVE") {
+      res.status(400).json({
+        success: false,
+        message: "Cannot leave tournament after it has started",
+      });
+      return;
+    }
+
+    // Remove from tournament
+    await prisma.tournamentPlayer.delete({
+      where: {
+        userId_tournamentId: {
+          userId,
+          tournamentId: id,
+        },
+      },
+    });
+
+    // Update tournament player count
+    await prisma.tournament.update({
+      where: { id },
+      data: {
+        currentPlayers: {
+          decrement: 1,
+        },
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Successfully left tournament",
+    });
+  })
+);
+
+// GET /api/tournaments/:id/bracket - Get tournament bracket
+router.get(
+  "/:id/bracket",
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    const tournament = await prisma.tournament.findUnique({
+      where: { id },
+      include: {
+        players: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                avatar: true,
+              },
+            },
+          },
+        },
+        matches: {
+          include: {
+            player1: {
+              select: {
+                id: true,
+                username: true,
+                avatar: true,
+              },
+            },
+            player2: {
+              select: {
+                id: true,
+                username: true,
+                avatar: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!tournament) {
+      res.status(404).json({
+        success: false,
+        message: "Tournament not found",
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        tournament: {
+          id: tournament.id,
+          title: tournament.title,
+          status: tournament.status,
+          bracketType: tournament.bracketType,
+          bracket: tournament.bracket,
+        },
+        players: tournament.players,
+        matches: tournament.matches,
+      },
+    });
+  })
+);
+
+// GET /api/tournaments/by-location/:province - Get tournaments by province
+router.get(
+  "/by-location/:province",
+  validateQuery(schemas.pagination),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { province } = req.params;
+    const { page = 1, limit = 20, city } = req.query as any;
+
+    const skip = (page - 1) * limit;
+
+    const where: any = { province };
+    if (city) where.city = city;
+
+    const [tournaments, total] = await Promise.all([
+      prisma.tournament.findMany({
+        skip,
+        take: limit,
+        where,
+        orderBy: { createdAt: "desc" },
+        include: {
+          game: {
+            select: {
+              id: true,
+              name: true,
+              emoji: true,
+            },
+          },
+          _count: {
+            select: { players: true },
+          },
+        },
+      }),
+      prisma.tournament.count({ where }),
+    ]);
+
+    const totalPages = Math.ceil(total / limit);
+
+    res.json({
+      success: true,
+      data: {
+        tournaments: tournaments.map((tournament) => ({
+          ...tournament,
+          stats: {
+            totalPlayers: tournament._count.players,
+            spotsRemaining: tournament.maxPlayers - tournament.currentPlayers,
+          },
+        })),
+        pagination: {
+          currentPage: page,
+          totalPages,
+          totalItems: total,
+          hasNextPage: page < totalPages,
+          hasPreviousPage: page > 1,
+          limit,
+        },
+      },
+    });
+  })
+);
+
+// PUT /api/tournaments/:id - Update tournament (admin only)
+router.put(
+  "/:id",
+  authenticate,
+  adminOnly,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const updateData = req.body;
+
+    const tournament = await prisma.tournament.findUnique({
+      where: { id },
+    });
+
+    if (!tournament) {
+      res.status(404).json({
+        success: false,
+        message: "Tournament not found",
+      });
+      return;
+    }
+
+    const updatedTournament = await prisma.tournament.update({
+      where: { id },
+      data: updateData,
+      include: {
+        game: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Tournament updated successfully",
+      data: { tournament: updatedTournament },
+    });
+  })
+);
+
+// DELETE /api/tournaments/:id - Cancel tournament (admin only)
+router.delete(
+  "/:id",
+  authenticate,
+  adminOnly,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    const tournament = await prisma.tournament.findUnique({
+      where: { id },
+    });
+
+    if (!tournament) {
+      res.status(404).json({
+        success: false,
+        message: "Tournament not found",
+      });
+      return;
+    }
+
+    if (tournament.status === "ACTIVE") {
+      res.status(400).json({
+        success: false,
+        message: "Cannot cancel active tournament",
+      });
+      return;
+    }
+
+    await prisma.tournament.update({
+      where: { id },
+      data: { status: "CANCELLED" },
+    });
+
+    res.json({
+      success: true,
+      message: "Tournament cancelled successfully",
+    });
+  })
+);
 
 export default router;

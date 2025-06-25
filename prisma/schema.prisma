@@ -105,17 +105,34 @@ model Tournament {
   // Tournament status
   status        TournamentStatus @default(OPEN)
   
+  // Enhanced Zimbabwe Location System
+  province        String?          // Tournament province
+  city           String?           // City within province
+  location       String            // Keep for backward compatibility
+  venue          String?           // Physical venue if applicable
+  isOnlineOnly   Boolean @default(true)
+  latitude       Float?
+  longitude      Float?
+  radius         Float?            // km radius for location-based matching
+
+  // Zimbabwe Market Features
+  targetAudience String?           // "university", "corporate", "public"
+  sponsorName    String?           // Local sponsor (e.g., "Econet", "CBZ")
+  minimumAge     Int?              // Age restrictions
+  maxAge         Int?              // Age restrictions
+  category       TournamentCategory? // "students", "professionals", "open"
+  difficultyLevel String?          // "beginner", "intermediate", "advanced"
+
+  // Enhanced Prize System
+  prizeBreakdown    Json?          // Detailed prize distribution
+  localCurrency     String @default("USD")
+  platformFeeRate   Float @default(0.20)  // 20% platform fee
+  
   // Dates
   registrationStart DateTime
   registrationEnd   DateTime
   startDate         DateTime
   endDate           DateTime?
-  
-  // Location-based
-  location      String
-  latitude      Float?
-  longitude     Float?
-  radius        Float?  // km radius for location-based matching
   
   // Tournament type
   gameId        String
@@ -401,4 +418,63 @@ enum PaymentStatus {
   CANCELLED               // NEW: User cancelled
   REFUNDED
   EXPIRED                 // NEW: Payment link expired
+}
+
+// Zimbabwe-specific models
+model ZimbabweLocation {
+  id       String @id @default(cuid())
+  province String             // 10 provinces of Zimbabwe
+  city     String
+  latitude Float?
+  longitude Float?
+  isActive Boolean @default(true)
+
+  @@unique([province, city])
+  @@map("zimbabwe_locations")
+}
+
+model Institution {
+  id          String @id @default(cuid())
+  name        String @unique
+  type        String             // "university", "college", "polytechnic", "company"
+  city        String
+  province    String
+  website     String?
+  isActive    Boolean @default(true)
+
+  // Statistics
+  totalUsers     Int @default(0)
+  totalTournaments Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("institutions")
+}
+
+model MobileMoneyProvider {
+  id          String @id @default(cuid())
+  name        String @unique        // "EcoCash", "OneMoney", "Telecash"
+  code        String @unique        // Pesepay payment method code
+  isActive    Boolean @default(true)
+  minAmount   Float                 // Minimum transaction amount
+  maxAmount   Float                 // Maximum transaction amount
+  feeStructure Json?                // Fee calculation rules
+
+  @@map("mobile_money_providers")
+}
+
+// Enhanced enums for Zimbabwe
+enum TournamentCategory {
+  UNIVERSITY              // NEW
+  CORPORATE              // NEW
+  PUBLIC                 // NEW
+  INVITATION_ONLY        // NEW
+}
+
+enum VerificationLevel {
+  UNVERIFIED
+  PHONE_VERIFIED         // NEW
+  ID_VERIFIED           // NEW
+  INSTITUTION_VERIFIED  // NEW
 } 

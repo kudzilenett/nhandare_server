@@ -251,6 +251,92 @@ export const schemas = {
       }),
     paymentMethodCode: joi.string().required(),
   }),
+
+  // Tournament validation schema
+  tournament: joi.object({
+    title: joi.string().min(3).max(100).required().messages({
+      "any.required": "Tournament title is required",
+      "string.min": "Title must be at least 3 characters long",
+      "string.max": "Title cannot exceed 100 characters",
+    }),
+    description: joi.string().max(1000).optional(),
+    gameId: joi.string().uuid().required().messages({
+      "any.required": "Game ID is required",
+      "string.guid": "Game ID must be a valid UUID",
+    }),
+
+    // Prize and fee validation
+    entryFee: joi.number().min(1).max(100).required().messages({
+      "any.required": "Entry fee is required",
+      "number.min": "Entry fee must be at least $1 USD",
+      "number.max": "Entry fee cannot exceed $100 USD",
+    }),
+    prizePool: joi.number().min(0).required(),
+    maxPlayers: joi.number().integer().min(2).max(64).required().messages({
+      "any.required": "Maximum players is required",
+      "number.min": "Must allow at least 2 players",
+      "number.max": "Cannot exceed 64 players",
+    }),
+
+    // Zimbabwe location validation
+    province: joi
+      .string()
+      .valid(
+        "Harare",
+        "Bulawayo",
+        "Manicaland",
+        "Mashonaland Central",
+        "Mashonaland East",
+        "Mashonaland West",
+        "Masvingo",
+        "Matabeleland North",
+        "Matabeleland South",
+        "Midlands"
+      )
+      .optional(),
+    city: joi.string().min(2).max(50).optional(),
+    location: joi.string().max(100).optional(),
+    venue: joi.string().max(100).optional(),
+    isOnlineOnly: joi.boolean().default(true),
+
+    // Tournament categories
+    targetAudience: joi
+      .string()
+      .valid("university", "corporate", "public")
+      .optional(),
+    sponsorName: joi.string().max(100).optional(),
+    minimumAge: joi.number().integer().min(13).max(100).optional(),
+    maxAge: joi.number().integer().min(13).max(100).optional(),
+    category: joi
+      .string()
+      .valid("UNIVERSITY", "CORPORATE", "PUBLIC", "INVITATION_ONLY")
+      .optional(),
+    difficultyLevel: joi
+      .string()
+      .valid("beginner", "intermediate", "advanced")
+      .optional(),
+
+    // Prize system
+    prizeBreakdown: joi.object().optional(),
+    localCurrency: joi.string().valid("USD", "ZWL").default("USD"),
+    platformFeeRate: joi.number().min(0).max(0.5).default(0.2),
+
+    // Dates
+    registrationStart: joi.date().iso().required(),
+    registrationEnd: joi
+      .date()
+      .iso()
+      .greater(joi.ref("registrationStart"))
+      .required(),
+    startDate: joi.date().iso().greater(joi.ref("registrationEnd")).required(),
+    endDate: joi.date().iso().greater(joi.ref("startDate")).optional(),
+
+    // Bracket settings
+    bracketType: joi
+      .string()
+      .valid("SINGLE_ELIMINATION", "DOUBLE_ELIMINATION", "ROUND_ROBIN", "SWISS")
+      .default("SINGLE_ELIMINATION"),
+  }),
 };
 
 // Parameter validation schemas
@@ -297,7 +383,8 @@ export const validateQuery = (schema: joi.ObjectSchema) => {
       return;
     }
 
-    req.query = value;
+    // Don't reassign req.query as it's read-only
+    // The validated values are already in req.query
     next();
   };
 };
@@ -321,7 +408,8 @@ export const validateParams = (schema: joi.ObjectSchema) => {
       return;
     }
 
-    req.params = value;
+    // Don't reassign req.params as it's read-only
+    // The validated values are already in req.params
     next();
   };
 };
