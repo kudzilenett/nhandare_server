@@ -85,10 +85,40 @@ export const schemas = {
           "Password must contain at least one lowercase letter, one uppercase letter, one number, and one special character",
         "any.required": "Password is required",
       }),
-    location: joi.string().min(2).max(100).required().messages({
+    // Zimbabwe-specific fields
+    firstName: joi.string().min(2).max(50).optional().messages({
+      "string.min": "First name must be at least 2 characters",
+      "string.max": "First name cannot exceed 50 characters",
+    }),
+    lastName: joi.string().min(2).max(50).optional().messages({
+      "string.min": "Last name must be at least 2 characters",
+      "string.max": "Last name cannot exceed 50 characters",
+    }),
+    phoneNumber: joi
+      .string()
+      .pattern(/^\+263[0-9]{9}$/)
+      .optional()
+      .messages({
+        "string.pattern.base":
+          "Phone number must be valid Zimbabwe format (+263XXXXXXXXX)",
+      }),
+    province: joi.string().min(2).max(50).optional().messages({
+      "string.min": "Province must be at least 2 characters",
+      "string.max": "Province cannot exceed 50 characters",
+    }),
+    city: joi.string().min(2).max(50).optional().messages({
+      "string.min": "City must be at least 2 characters",
+      "string.max": "City cannot exceed 50 characters",
+    }),
+    institution: joi.string().min(2).max(100).optional().messages({
+      "string.min": "Institution must be at least 2 characters",
+      "string.max": "Institution cannot exceed 100 characters",
+    }),
+    isStudent: joi.boolean().optional(),
+    // Legacy location field (optional for backward compatibility)
+    location: joi.string().min(2).max(100).optional().messages({
       "string.min": "Location must be at least 2 characters",
       "string.max": "Location cannot exceed 100 characters",
-      "any.required": "Location is required",
     }),
   }),
 
@@ -100,8 +130,23 @@ export const schemas = {
   // User profile schemas
   updateProfile: joi.object({
     username: joi.string().alphanum().min(3).max(20).optional(),
-    location: joi.string().min(2).max(100).optional(),
+    firstName: joi.string().min(2).max(50).optional(),
+    lastName: joi.string().min(2).max(50).optional(),
+    phoneNumber: joi
+      .string()
+      .pattern(/^\+263[0-9]{9}$/)
+      .optional()
+      .messages({
+        "string.pattern.base":
+          "Phone number must be valid Zimbabwe format (+263XXXXXXXXX)",
+      }),
+    province: joi.string().min(2).max(50).optional(),
+    city: joi.string().min(2).max(50).optional(),
+    institution: joi.string().min(2).max(100).optional(),
+    isStudent: joi.boolean().optional(),
     bio: joi.string().max(500).optional(),
+    // Legacy location field (optional for backward compatibility)
+    location: joi.string().min(2).max(100).optional(),
   }),
 
   changePassword: joi.object({
@@ -123,7 +168,13 @@ export const schemas = {
     prizePool: joi.number().min(0).required(),
     startDate: joi.date().iso().greater("now").required(),
     endDate: joi.date().iso().greater(joi.ref("startDate")).required(),
-    location: joi.string().min(2).max(100).required(),
+    // Zimbabwe location fields
+    province: joi.string().min(2).max(50).optional(),
+    city: joi.string().min(2).max(50).optional(),
+    venue: joi.string().max(100).optional(),
+    isOnlineOnly: joi.boolean().default(true),
+    // Legacy location field (optional for backward compatibility)
+    location: joi.string().min(2).max(100).optional(),
     type: joi
       .string()
       .valid("single_elimination", "double_elimination", "round_robin", "swiss")

@@ -190,10 +190,25 @@ export const corsConfig = {
     const allowedOrigins = [
       env.FRONTEND_URL,
       env.SOCKET_CORS_ORIGIN,
-      // Add other allowed origins as needed
+      // Allow Expo dev servers on local network (e.g., http://192.168.x.x:8081)
+      ...(env.NODE_ENV === "development"
+        ? [
+            /^http:\/\/192\.168\.[0-9]{1,3}\.[0-9]{1,3}:8081$/,
+            /^http:\/\/10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:8081$/,
+            /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\.[0-9]{1,3}\.[0-9]{1,3}:8081$/,
+          ]
+        : []),
     ];
 
-    if (allowedOrigins.includes(origin)) {
+    const isAllowed = allowedOrigins.some((allowed) => {
+      if (typeof allowed === "string") {
+        return allowed === origin;
+      }
+      // RegExp
+      return allowed.test(origin);
+    });
+
+    if (isAllowed) {
       callback(null, true);
     } else {
       logSecurity("CORS violation", { origin, ip: "unknown" });

@@ -49,6 +49,11 @@ router.get(
           email: true,
           firstName: true,
           lastName: true,
+          phoneNumber: true,
+          province: true,
+          city: true,
+          institution: true,
+          isStudent: true,
           avatar: true,
           location: true,
           points: true,
@@ -99,6 +104,11 @@ router.get(
         email: true,
         firstName: true,
         lastName: true,
+        phoneNumber: true,
+        province: true,
+        city: true,
+        institution: true,
+        isStudent: true,
         avatar: true,
         bio: true,
         location: true,
@@ -167,11 +177,23 @@ router.get(
 router.put(
   "/:id",
   validateParams(paramSchemas.id),
+  validateSchema(schemas.updateProfile),
   checkOwnership("id"),
   authenticate,
   asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
-    const { username, firstName, lastName, bio, location } = req.body;
+    const {
+      username,
+      firstName,
+      lastName,
+      phoneNumber,
+      province,
+      city,
+      institution,
+      isStudent,
+      bio,
+      location,
+    } = req.body;
 
     // Check if username is taken (if changing)
     if (username) {
@@ -197,6 +219,11 @@ router.put(
         ...(username && { username: username.toLowerCase() }),
         ...(firstName && { firstName }),
         ...(lastName && { lastName }),
+        ...(phoneNumber && { phoneNumber }),
+        ...(province && { province }),
+        ...(city && { city }),
+        ...(institution && { institution }),
+        ...(isStudent !== undefined && { isStudent }),
         ...(bio !== undefined && { bio }),
         ...(location && { location }),
         updatedAt: new Date(),
@@ -206,6 +233,11 @@ router.put(
         username: true,
         firstName: true,
         lastName: true,
+        phoneNumber: true,
+        province: true,
+        city: true,
+        institution: true,
+        isStudent: true,
         bio: true,
         location: true,
         updatedAt: true,
@@ -215,7 +247,18 @@ router.put(
     logger.info("User profile updated", {
       userId: id,
       updatedBy: req.user!.id,
-      changes: { username, firstName, lastName, bio, location },
+      changes: {
+        username,
+        firstName,
+        lastName,
+        phoneNumber,
+        province,
+        city,
+        institution,
+        isStudent,
+        bio,
+        location,
+      },
     });
 
     res.json({

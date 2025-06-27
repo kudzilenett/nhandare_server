@@ -24,7 +24,19 @@ router.post(
   "/register",
   validateSchema(schemas.register),
   asyncHandler(async (req: Request, res: Response) => {
-    const { email, username, password, location } = req.body;
+    const {
+      email,
+      username,
+      password,
+      firstName,
+      lastName,
+      phoneNumber,
+      province,
+      city,
+      institution,
+      isStudent,
+      location,
+    } = req.body;
 
     // Check if user already exists
     const existingUser = await prisma.user.findFirst({
@@ -55,14 +67,22 @@ router.post(
     const saltRounds = env.BCRYPT_ROUNDS;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // Create user
+    // Create user with Zimbabwe-specific fields
     const user = await prisma.user.create({
       data: {
         id: uuidv4(),
         email: email.toLowerCase(),
         username: username.toLowerCase(),
         password: hashedPassword,
-        location,
+        firstName,
+        lastName,
+        phoneNumber,
+        province,
+        city,
+        institution,
+        isStudent: isStudent || false,
+        location:
+          location || `${city || ""}, ${province || ""}`.trim() || "Zimbabwe",
         isActive: true,
         isVerified: false, // Email verification
         createdAt: new Date(),
@@ -72,6 +92,13 @@ router.post(
         id: true,
         email: true,
         username: true,
+        firstName: true,
+        lastName: true,
+        phoneNumber: true,
+        province: true,
+        city: true,
+        institution: true,
+        isStudent: true,
         location: true,
         points: true,
         rank: true,
@@ -94,6 +121,8 @@ router.post(
       userId: user.id,
       email: user.email,
       username: user.username,
+      province: user.province,
+      city: user.city,
       ip: req.ip,
     });
 
@@ -123,6 +152,13 @@ router.post(
         email: true,
         username: true,
         password: true,
+        firstName: true,
+        lastName: true,
+        phoneNumber: true,
+        province: true,
+        city: true,
+        institution: true,
+        isStudent: true,
         location: true,
         points: true,
         rank: true,
@@ -236,6 +272,13 @@ router.get(
         id: true,
         email: true,
         username: true,
+        firstName: true,
+        lastName: true,
+        phoneNumber: true,
+        province: true,
+        city: true,
+        institution: true,
+        isStudent: true,
         location: true,
         points: true,
         rank: true,
@@ -266,7 +309,18 @@ router.patch(
   authenticate,
   validateSchema(schemas.updateProfile),
   asyncHandler(async (req, res) => {
-    const { username, location, bio } = req.body;
+    const {
+      username,
+      firstName,
+      lastName,
+      phoneNumber,
+      province,
+      city,
+      institution,
+      isStudent,
+      location,
+      bio,
+    } = req.body;
     const userId = req.user!.id;
 
     // Check if username is taken (if provided)
@@ -288,6 +342,13 @@ router.patch(
       where: { id: userId },
       data: {
         ...(username && { username: username.toLowerCase() }),
+        ...(firstName && { firstName }),
+        ...(lastName && { lastName }),
+        ...(phoneNumber && { phoneNumber }),
+        ...(province && { province }),
+        ...(city && { city }),
+        ...(institution && { institution }),
+        ...(isStudent !== undefined && { isStudent }),
         ...(location && { location }),
         ...(bio !== undefined && { bio }),
         updatedAt: new Date(),
@@ -296,6 +357,13 @@ router.patch(
         id: true,
         email: true,
         username: true,
+        firstName: true,
+        lastName: true,
+        phoneNumber: true,
+        province: true,
+        city: true,
+        institution: true,
+        isStudent: true,
         location: true,
         bio: true,
         points: true,
@@ -309,7 +377,18 @@ router.patch(
 
     logger.info("User profile updated", {
       userId,
-      updates: { username, location, bio: !!bio },
+      updates: {
+        username,
+        firstName,
+        lastName,
+        phoneNumber,
+        province,
+        city,
+        institution,
+        isStudent,
+        location,
+        bio: !!bio,
+      },
     });
 
     res.json({

@@ -26,6 +26,7 @@ async function main() {
   // 1. Create Zimbabwe locations
   console.log("📍 Creating Zimbabwe locations...");
   const locations = [
+    // Harare Province
     {
       province: "Harare",
       city: "Harare",
@@ -38,13 +39,106 @@ async function main() {
       latitude: -18.01,
       longitude: 31.07,
     },
-    { province: "Harare", city: "Epworth", latitude: -17.89, longitude: 31.15 },
+    {
+      province: "Harare",
+      city: "Epworth",
+      latitude: -17.89,
+      longitude: 31.15,
+    },
+    {
+      province: "Harare",
+      city: "Ruwa",
+      latitude: -17.89,
+      longitude: 31.24,
+    },
+    {
+      province: "Harare",
+      city: "Norton",
+      latitude: -17.88,
+      longitude: 30.7,
+    },
+    {
+      province: "Harare",
+      city: "Borrowdale",
+      latitude: -17.8,
+      longitude: 31.08,
+    },
+    {
+      province: "Harare",
+      city: "Avondale",
+      latitude: -17.82,
+      longitude: 31.04,
+    },
+    {
+      province: "Harare",
+      city: "Mbare",
+      latitude: -17.84,
+      longitude: 31.05,
+    },
+    {
+      province: "Harare",
+      city: "Hatfield",
+      latitude: -17.83,
+      longitude: 31.06,
+    },
+    {
+      province: "Harare",
+      city: "Mount Pleasant",
+      latitude: -17.81,
+      longitude: 31.07,
+    },
+
+    // Bulawayo Province
     {
       province: "Bulawayo",
       city: "Bulawayo",
       latitude: -20.1594,
       longitude: 28.5886,
     },
+    {
+      province: "Bulawayo",
+      city: "Cowdray Park",
+      latitude: -20.12,
+      longitude: 28.55,
+    },
+    {
+      province: "Bulawayo",
+      city: "Pumula",
+      latitude: -20.18,
+      longitude: 28.57,
+    },
+    {
+      province: "Bulawayo",
+      city: "Entumbane",
+      latitude: -20.14,
+      longitude: 28.56,
+    },
+    {
+      province: "Bulawayo",
+      city: "Nkulumane",
+      latitude: -20.17,
+      longitude: 28.56,
+    },
+    {
+      province: "Bulawayo",
+      city: "Magwegwe",
+      latitude: -20.13,
+      longitude: 28.54,
+    },
+    {
+      province: "Bulawayo",
+      city: "Mpopoma",
+      latitude: -20.15,
+      longitude: 28.58,
+    },
+    {
+      province: "Bulawayo",
+      city: "Luveve",
+      latitude: -20.11,
+      longitude: 28.53,
+    },
+
+    // Manicaland Province
     {
       province: "Manicaland",
       city: "Mutare",
@@ -58,11 +152,87 @@ async function main() {
       longitude: 32.1254,
     },
     {
+      province: "Manicaland",
+      city: "Chipinge",
+      latitude: -20.1879,
+      longitude: 32.6235,
+    },
+    {
+      province: "Manicaland",
+      city: "Nyanga",
+      latitude: -18.2167,
+      longitude: 32.75,
+    },
+    {
+      province: "Manicaland",
+      city: "Chimanimani",
+      latitude: -19.8,
+      longitude: 32.8667,
+    },
+    {
+      province: "Manicaland",
+      city: "Makoni",
+      latitude: -18.85,
+      longitude: 32.4,
+    },
+    {
+      province: "Manicaland",
+      city: "Penhalonga",
+      latitude: -18.8833,
+      longitude: 32.6833,
+    },
+    {
+      province: "Manicaland",
+      city: "Hauna",
+      latitude: -18.95,
+      longitude: 32.55,
+    },
+
+    // Mashonaland Central Province
+    {
       province: "Mashonaland Central",
       city: "Bindura",
       latitude: -17.3017,
       longitude: 31.3314,
     },
+    {
+      province: "Mashonaland Central",
+      city: "Shamva",
+      latitude: -17.3167,
+      longitude: 31.5833,
+    },
+    {
+      province: "Mashonaland Central",
+      city: "Centenary",
+      latitude: -16.7833,
+      longitude: 31.1167,
+    },
+    {
+      province: "Mashonaland Central",
+      city: "Mount Darwin",
+      latitude: -16.7667,
+      longitude: 31.5833,
+    },
+    {
+      province: "Mashonaland Central",
+      city: "Guruve",
+      latitude: -16.65,
+      longitude: 30.7,
+    },
+    {
+      province: "Mashonaland Central",
+      city: "Mazowe",
+      latitude: -17.5167,
+      longitude: 30.9667,
+    },
+    {
+      province: "Mashonaland Central",
+      city: "Rushinga",
+      latitude: -16.8333,
+      longitude: 32.0667,
+    },
+
+    // Mashonaland East Province
     {
       province: "Mashonaland East",
       city: "Marondera",
@@ -70,16 +240,136 @@ async function main() {
       longitude: 31.5513,
     },
     {
+      province: "Mashonaland East",
+      city: "Macheke",
+      latitude: -18.15,
+      longitude: 31.85,
+    },
+    {
+      province: "Mashonaland East",
+      city: "Wedza",
+      latitude: -18.4,
+      longitude: 31.5167,
+    },
+    {
+      province: "Mashonaland East",
+      city: "Murehwa",
+      latitude: -17.65,
+      longitude: 31.7833,
+    },
+    {
+      province: "Mashonaland East",
+      city: "Seke",
+      latitude: -17.95,
+      longitude: 31.1833,
+    },
+    {
+      province: "Mashonaland East",
+      city: "Goromonzi",
+      latitude: -17.8667,
+      longitude: 31.4,
+    },
+    {
+      province: "Mashonaland East",
+      city: "Hwedza",
+      latitude: -18.6167,
+      longitude: 31.5167,
+    },
+
+    // Mashonaland West Province
+    {
       province: "Mashonaland West",
       city: "Chinhoyi",
       latitude: -17.3572,
       longitude: 30.1985,
     },
     {
+      province: "Mashonaland West",
+      city: "Kariba",
+      latitude: -16.5167,
+      longitude: 28.8,
+    },
+    {
+      province: "Mashonaland West",
+      city: "Kadoma",
+      latitude: -18.3333,
+      longitude: 29.9167,
+    },
+    {
+      province: "Mashonaland West",
+      city: "Chegutu",
+      latitude: -18.1333,
+      longitude: 30.1333,
+    },
+    {
+      province: "Mashonaland West",
+      city: "Banket",
+      latitude: -17.3833,
+      longitude: 30.4,
+    },
+    {
+      province: "Mashonaland West",
+      city: "Trelawney",
+      latitude: -17.8333,
+      longitude: 29.8667,
+    },
+    {
+      province: "Mashonaland West",
+      city: "Makonde",
+      latitude: -17.15,
+      longitude: 30.3,
+    },
+
+    // Masvingo Province
+    {
       province: "Masvingo",
       city: "Masvingo",
       latitude: -20.0637,
       longitude: 30.8408,
+    },
+    {
+      province: "Masvingo",
+      city: "Chiredzi",
+      latitude: -21.05,
+      longitude: 31.6667,
+    },
+    {
+      province: "Masvingo",
+      city: "Triangle",
+      latitude: -21.0167,
+      longitude: 31.4833,
+    },
+    {
+      province: "Masvingo",
+      city: "Bikita",
+      latitude: -20.0833,
+      longitude: 31.3,
+    },
+    {
+      province: "Masvingo",
+      city: "Gutu",
+      latitude: -19.6333,
+      longitude: 31.15,
+    },
+    {
+      province: "Masvingo",
+      city: "Zaka",
+      latitude: -20.4,
+      longitude: 31.3833,
+    },
+    {
+      province: "Masvingo",
+      city: "Chivi",
+      latitude: -20.65,
+      longitude: 30.9,
+    },
+
+    // Matabeleland North Province
+    {
+      province: "Matabeleland North",
+      city: "Victoria Falls",
+      latitude: -17.9243,
+      longitude: 25.8572,
     },
     {
       province: "Matabeleland North",
@@ -88,11 +378,81 @@ async function main() {
       longitude: 26.5023,
     },
     {
+      province: "Matabeleland North",
+      city: "Lupane",
+      latitude: -18.9333,
+      longitude: 27.8,
+    },
+    {
+      province: "Matabeleland North",
+      city: "Tsholotsho",
+      latitude: -19.75,
+      longitude: 27.7667,
+    },
+    {
+      province: "Matabeleland North",
+      city: "Binga",
+      latitude: -17.6167,
+      longitude: 27.3333,
+    },
+    {
+      province: "Matabeleland North",
+      city: "Kamativi",
+      latitude: -18.35,
+      longitude: 26.3167,
+    },
+    {
+      province: "Matabeleland North",
+      city: "Dete",
+      latitude: -18.7167,
+      longitude: 26.9333,
+    },
+
+    // Matabeleland South Province
+    {
       province: "Matabeleland South",
       city: "Gwanda",
       latitude: -20.9334,
       longitude: 29.002,
     },
+    {
+      province: "Matabeleland South",
+      city: "Beitbridge",
+      latitude: -22.2167,
+      longitude: 30.0,
+    },
+    {
+      province: "Matabeleland South",
+      city: "Plumtree",
+      latitude: -20.4833,
+      longitude: 27.8167,
+    },
+    {
+      province: "Matabeleland South",
+      city: "Esigodini",
+      latitude: -20.3167,
+      longitude: 28.9333,
+    },
+    {
+      province: "Matabeleland South",
+      city: "Filabusi",
+      latitude: -20.5167,
+      longitude: 29.2833,
+    },
+    {
+      province: "Matabeleland South",
+      city: "Maphisa",
+      latitude: -20.9167,
+      longitude: 29.5167,
+    },
+    {
+      province: "Matabeleland South",
+      city: "West Nicholson",
+      latitude: -21.0667,
+      longitude: 29.4167,
+    },
+
+    // Midlands Province
     {
       province: "Midlands",
       city: "Gweru",
@@ -104,6 +464,36 @@ async function main() {
       city: "Kwekwe",
       latitude: -18.9167,
       longitude: 29.8167,
+    },
+    {
+      province: "Midlands",
+      city: "Shurugwi",
+      latitude: -19.6667,
+      longitude: 30.0167,
+    },
+    {
+      province: "Midlands",
+      city: "Zvishavane",
+      latitude: -20.3333,
+      longitude: 30.0667,
+    },
+    {
+      province: "Midlands",
+      city: "Redcliff",
+      latitude: -19.0333,
+      longitude: 29.7833,
+    },
+    {
+      province: "Midlands",
+      city: "Gokwe",
+      latitude: -18.2167,
+      longitude: 28.9333,
+    },
+    {
+      province: "Midlands",
+      city: "Lalapanzi",
+      latitude: -19.55,
+      longitude: 29.75,
     },
   ];
 
