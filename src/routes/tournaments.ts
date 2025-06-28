@@ -33,7 +33,13 @@ router.get(
       targetAudience,
     } = req.query as any;
 
-    const skip = (page - 1) * limit;
+    // Ensure numeric pagination values
+    const pageNumber =
+      typeof page === "string" ? parseInt(page, 10) || 1 : page;
+    const limitNumber =
+      typeof limit === "string" ? parseInt(limit, 10) || 20 : limit;
+
+    const skip = (pageNumber - 1) * limitNumber;
 
     // Build filter conditions
     const where: any = {};
@@ -54,7 +60,7 @@ router.get(
     const [tournaments, total] = await Promise.all([
       prisma.tournament.findMany({
         skip,
-        take: limit,
+        take: limitNumber,
         where,
         orderBy: {
           [sortBy]: sortOrder,
@@ -81,9 +87,9 @@ router.get(
     ]);
 
     // Calculate pagination
-    const totalPages = Math.ceil(total / limit);
-    const hasNextPage = page < totalPages;
-    const hasPreviousPage = page > 1;
+    const totalPages = Math.ceil(total / limitNumber);
+    const hasNextPage = pageNumber < totalPages;
+    const hasPreviousPage = pageNumber > 1;
 
     res.json({
       success: true,
@@ -97,12 +103,12 @@ router.get(
           },
         })),
         pagination: {
-          currentPage: page,
+          currentPage: pageNumber,
           totalPages,
           totalItems: total,
           hasNextPage,
           hasPreviousPage,
-          limit,
+          limit: limitNumber,
         },
       },
     });
@@ -522,7 +528,13 @@ router.get(
     const { province } = req.params;
     const { page = 1, limit = 20, city } = req.query as any;
 
-    const skip = (page - 1) * limit;
+    // Ensure numeric pagination values
+    const pageNumber =
+      typeof page === "string" ? parseInt(page, 10) || 1 : page;
+    const limitNumber =
+      typeof limit === "string" ? parseInt(limit, 10) || 20 : limit;
+
+    const skip = (pageNumber - 1) * limitNumber;
 
     const where: any = { province };
     if (city) where.city = city;
@@ -530,7 +542,7 @@ router.get(
     const [tournaments, total] = await Promise.all([
       prisma.tournament.findMany({
         skip,
-        take: limit,
+        take: limitNumber,
         where,
         orderBy: { createdAt: "desc" },
         include: {
@@ -549,7 +561,7 @@ router.get(
       prisma.tournament.count({ where }),
     ]);
 
-    const totalPages = Math.ceil(total / limit);
+    const totalPages = Math.ceil(total / limitNumber);
 
     res.json({
       success: true,
@@ -562,12 +574,12 @@ router.get(
           },
         })),
         pagination: {
-          currentPage: page,
+          currentPage: pageNumber,
           totalPages,
           totalItems: total,
-          hasNextPage: page < totalPages,
-          hasPreviousPage: page > 1,
-          limit,
+          hasNextPage: pageNumber < totalPages,
+          hasPreviousPage: pageNumber > 1,
+          limit: limitNumber,
         },
       },
     });

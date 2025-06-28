@@ -393,7 +393,14 @@ export const schemas = {
 // Parameter validation schemas
 export const paramSchemas = {
   id: joi.object({
-    id: joi.string().uuid().required(),
+    // Accept UUID (36 chars) or CUID/ulid style ids (usually 24+ alphanumerics)
+    id: joi
+      .string()
+      .pattern(/^[a-zA-Z0-9_-]{20,}$/)
+      .required()
+      .messages({
+        "string.pattern.base": "id must be a valid identifier",
+      }),
   }),
   gameId: joi.object({
     gameId: joi.string().uuid().required(),
