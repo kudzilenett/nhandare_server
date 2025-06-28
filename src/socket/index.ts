@@ -398,6 +398,41 @@ export const initializeSocket = (io: SocketServer) => {
       }
     });
 
+    // Handle tournament chat joining
+    socket.on("join-tournament-chat", ({ tournamentId }) => {
+      try {
+        const room = `tournamentChat:${tournamentId}`;
+        socket.join(room);
+        socket.emit("joined-tournament-chat", { tournamentId });
+      } catch (err) {
+        logger.error("join-tournament-chat error", err);
+      }
+    });
+
+    socket.on("leave-tournament-chat", ({ tournamentId }) => {
+      try {
+        socket.leave(`tournamentChat:${tournamentId}`);
+      } catch (err) {
+        logger.error("leave-tournament-chat error", err);
+      }
+    });
+
+    socket.on("tournament:chat", async ({ tournamentId, text }) => {
+      try {
+        if (!text || !text.trim()) return;
+        const msg = {
+          id: Date.now().toString(36) + Math.random().toString(36).substring(2),
+          userId: socket.user?.id,
+          username: socket.user?.username,
+          text: text.trim(),
+          timestamp: Date.now(),
+        };
+        io.to(`tournamentChat:${tournamentId}`).emit("tournament:chat", msg);
+      } catch (err) {
+        logger.error("tournament chat error", err);
+      }
+    });
+
     // Handle disconnection
     socket.on("disconnect", (reason) => {
       logger.info("User disconnected from socket", {
