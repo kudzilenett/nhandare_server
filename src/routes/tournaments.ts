@@ -665,4 +665,47 @@ router.delete(
   })
 );
 
+// GET /api/tournaments/:id/chat - Get chat history for a tournament
+router.get(
+  "/:id/chat",
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const limit = Math.min(
+      100,
+      parseInt((req.query.limit as string) || "50", 10) || 50
+    );
+
+    // Verify tournament exists
+    const tournament = await prisma.tournament.findUnique({ where: { id } });
+    if (!tournament) {
+      res.status(404).json({ success: false, message: "Tournament not found" });
+      return;
+    }
+
+    // Fetch messages (latest first)
+    // @ts-ignore – generated after Prisma schema update
+    const messages = await prisma.tournamentChatMessage.findMany({
+      where: { tournamentId: id },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      include: {
+        user: { select: { id: true, username: true } },
+      },
+    });
+
+    const formatted = messages
+      .map((m) => ({
+        id: m.id,
+        userId: m.userId,
+        username: (m as any).user?.username || "Unknown",
+        text: m.text,
+        timestamp: m.createdAt.getTime(),
+      }))
+      .reverse(); // chronological
+
+    res.json({ success: true, data: { messages: formatted } });
+  })
+);
+
 export default router;

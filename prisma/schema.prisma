@@ -11,145 +11,147 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  username  String   @unique
+  id        String  @id @default(cuid())
+  email     String  @unique
+  username  String  @unique
   password  String
   firstName String?
   lastName  String?
   avatar    String?
   bio       String?
-  
+
   // Zimbabwe-specific fields
-  phoneNumber         String?  @unique    // Zimbabwe format +263...
-  ecocashNumber       String?             // For prize payouts
-  mobileMoneyProvider String?             // ECOCASH, ONEMONEY, TELECASH
-  preferredLanguage   String   @default("en") // en, sn, nd
-  isStudent           Boolean  @default(false)
-  institution         String?             // University/Company name
+  phoneNumber         String?   @unique // Zimbabwe format +263...
+  ecocashNumber       String? // For prize payouts
+  mobileMoneyProvider String? // ECOCASH, ONEMONEY, TELECASH
+  preferredLanguage   String    @default("en") // en, sn, nd
+  isStudent           Boolean   @default(false)
+  institution         String? // University/Company name
   dateOfBirth         DateTime?
-  gender              String?             // for demographic analytics
-  idNumber            String?  @unique    // National ID for verification
-  isVerifiedID        Boolean  @default(false)
-  
+  gender              String? // for demographic analytics
+  idNumber            String?   @unique // National ID for verification
+  isVerifiedID        Boolean   @default(false)
+
   // Enhanced Location for tournament brackets
-  province    String?             // Harare, Bulawayo, Manicaland, etc.
-  city        String?             // Specific city within province
-  location    String              // Keep for backward compatibility
-  latitude    Float?
-  longitude   Float?
-  
+  province  String? // Harare, Bulawayo, Manicaland, etc.
+  city      String? // Specific city within province
+  location  String // Keep for backward compatibility
+  latitude  Float?
+  longitude Float?
+
   // Game statistics
-  points      Int     @default(0)
+  points      Int   @default(0)
   rank        Int?
-  gamesPlayed Int     @default(0)
-  gamesWon    Int     @default(0)
-  winRate     Float   @default(0)
-  
+  gamesPlayed Int   @default(0)
+  gamesWon    Int   @default(0)
+  winRate     Float @default(0)
+
   // Account status
-  isActive    Boolean @default(true)
-  isVerified  Boolean @default(false)
-  
+  isActive   Boolean @default(true)
+  isVerified Boolean @default(false)
+
   // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   lastLogin DateTime?
-  
+
   // Relations
-  playerMatches    Match[]           @relation("Player1")
-  opponentMatches  Match[]           @relation("Player2")
-  tournaments      TournamentPlayer[]
-  gameStats        GameStatistic[]
-  sessions         GameSession[]
-  achievements     UserAchievement[]
-  payments         Payment[]
-  
+  playerMatches   Match[]                 @relation("Player1")
+  opponentMatches Match[]                 @relation("Player2")
+  tournaments     TournamentPlayer[]
+  gameStats       GameStatistic[]
+  sessions        GameSession[]
+  achievements    UserAchievement[]
+  payments        Payment[]
+  chatMessages    TournamentChatMessage[]
+
   @@map("users")
 }
 
 model Game {
-  id            String @id @default(cuid())
-  name          String @unique
+  id            String  @id @default(cuid())
+  name          String  @unique
   description   String
   emoji         String
-  minPlayers    Int    @default(2)
-  maxPlayers    Int    @default(2)
-  averageTimeMs Int    // in milliseconds
+  minPlayers    Int     @default(2)
+  maxPlayers    Int     @default(2)
+  averageTimeMs Int // in milliseconds
   isActive      Boolean @default(true)
-  
+
   // Game rules and settings
-  rules         Json?
-  settings      Json?
-  
+  rules    Json?
+  settings Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   // Relations
   tournaments Tournament[]
   matches     Match[]
   statistics  GameStatistic[]
   sessions    GameSession[]
-  
+
   @@map("games")
 }
 
 model Tournament {
-  id            String           @id @default(cuid())
-  title         String
-  description   String?
-  prizePool     Float            @default(0)
-  entryFee      Float            @default(0)
-  maxPlayers    Int              @default(64)
-  currentPlayers Int             @default(0)
-  
+  id             String  @id @default(cuid())
+  title          String
+  description    String?
+  prizePool      Float   @default(0)
+  entryFee       Float   @default(0)
+  maxPlayers     Int     @default(64)
+  currentPlayers Int     @default(0)
+
   // Tournament status
-  status        TournamentStatus @default(OPEN)
-  
+  status TournamentStatus @default(OPEN)
+
   // Enhanced Zimbabwe Location System
-  province        String?          // Tournament province
-  city           String?           // City within province
-  location       String            // Keep for backward compatibility
-  venue          String?           // Physical venue if applicable
-  isOnlineOnly   Boolean @default(true)
-  latitude       Float?
-  longitude      Float?
-  radius         Float?            // km radius for location-based matching
+  province     String? // Tournament province
+  city         String? // City within province
+  location     String // Keep for backward compatibility
+  venue        String? // Physical venue if applicable
+  isOnlineOnly Boolean @default(true)
+  latitude     Float?
+  longitude    Float?
+  radius       Float? // km radius for location-based matching
 
   // Zimbabwe Market Features
-  targetAudience String?           // "university", "corporate", "public"
-  sponsorName    String?           // Local sponsor (e.g., "Econet", "CBZ")
-  minimumAge     Int?              // Age restrictions
-  maxAge         Int?              // Age restrictions
-  category       TournamentCategory? // "students", "professionals", "open"
-  difficultyLevel String?          // "beginner", "intermediate", "advanced"
+  targetAudience  String? // "university", "corporate", "public"
+  sponsorName     String? // Local sponsor (e.g., "Econet", "CBZ")
+  minimumAge      Int? // Age restrictions
+  maxAge          Int? // Age restrictions
+  category        TournamentCategory? // "students", "professionals", "open"
+  difficultyLevel String? // "beginner", "intermediate", "advanced"
 
   // Enhanced Prize System
-  prizeBreakdown    Json?          // Detailed prize distribution
-  localCurrency     String @default("USD")
-  platformFeeRate   Float @default(0.20)  // 20% platform fee
-  
+  prizeBreakdown  Json? // Detailed prize distribution
+  localCurrency   String @default("USD")
+  platformFeeRate Float  @default(0.20) // 20% platform fee
+
   // Dates
   registrationStart DateTime
   registrationEnd   DateTime
   startDate         DateTime
   endDate           DateTime?
-  
+
   // Tournament type
-  gameId        String
-  game          Game             @relation(fields: [gameId], references: [id])
-  
+  gameId String
+  game   Game   @relation(fields: [gameId], references: [id])
+
   // Bracket settings
-  bracketType   BracketType      @default(SINGLE_ELIMINATION)
-  bracket       Json?            // Store bracket structure
-  
+  bracketType BracketType @default(SINGLE_ELIMINATION)
+  bracket     Json? // Store bracket structure
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   // Relations
-  players  TournamentPlayer[]
-  matches  Match[]
-  payments Payment[]
-  
+  players      TournamentPlayer[]
+  matches      Match[]
+  payments     Payment[]
+  chatMessages TournamentChatMessage[]
+
   @@map("tournaments")
 }
 
@@ -157,199 +159,199 @@ model TournamentPlayer {
   id           String @id @default(cuid())
   userId       String
   tournamentId String
-  
+
   // Registration info
   registeredAt DateTime @default(now())
-  joinedAt     DateTime @default(now())  // When they actually joined (after payment)
+  joinedAt     DateTime @default(now()) // When they actually joined (after payment)
   isActive     Boolean  @default(true)
   seedNumber   Int?
-  
+
   // Tournament progress
-  currentRound Int      @default(1)
-  isEliminated Boolean  @default(false)
-  placement    Int?     // Final placement
-  prizeWon     Float    @default(0)
-  
+  currentRound Int     @default(1)
+  isEliminated Boolean @default(false)
+  placement    Int? // Final placement
+  prizeWon     Float   @default(0)
+
   // Relations
   user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  
+
   @@unique([userId, tournamentId])
   @@map("tournament_players")
 }
 
 model Match {
-  id           String      @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Players
-  player1Id    String
-  player2Id    String
-  player1      User        @relation("Player1", fields: [player1Id], references: [id])
-  player2      User        @relation("Player2", fields: [player2Id], references: [id])
-  
+  player1Id String
+  player2Id String
+  player1   User   @relation("Player1", fields: [player1Id], references: [id])
+  player2   User   @relation("Player2", fields: [player2Id], references: [id])
+
   // Game info
-  gameId       String
-  game         Game        @relation(fields: [gameId], references: [id])
-  
+  gameId String
+  game   Game   @relation(fields: [gameId], references: [id])
+
   // Tournament info (optional)
   tournamentId String?
   tournament   Tournament? @relation(fields: [tournamentId], references: [id])
-  round        Int?        // Tournament round
-  
+  round        Int? // Tournament round
+
   // Match details
-  status       MatchStatus @default(PENDING)
-  result       MatchResult @default(PENDING)
-  winnerId     String?
-  
+  status   MatchStatus @default(PENDING)
+  result   MatchResult @default(PENDING)
+  winnerId String?
+
   // Game data
-  gameData     Json?       // Store game state, moves, etc.
-  duration     Int?        // Match duration in seconds
-  
+  gameData Json? // Store game state, moves, etc.
+  duration Int? // Match duration in seconds
+
   // Timestamps
-  createdAt    DateTime    @default(now())
-  startedAt    DateTime?
-  finishedAt   DateTime?
-  
+  createdAt  DateTime  @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+
   @@map("matches")
 }
 
 model GameSession {
-  id          String        @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Session info
-  userId      String
-  user        User          @relation(fields: [userId], references: [id])
-  gameId      String
-  game        Game          @relation(fields: [gameId], references: [id])
-  
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+  gameId String
+  game   Game   @relation(fields: [gameId], references: [id])
+
   // Session type
-  sessionType SessionType   @default(PRACTICE)
-  opponentId  String?       // null for AI opponents
-  
+  sessionType SessionType @default(PRACTICE)
+  opponentId  String? // null for AI opponents
+
   // Session data
-  isActive    Boolean       @default(true)
-  gameState   Json?         // Current game state
-  moves       Json[]        // Array of moves
-  
+  isActive  Boolean @default(true)
+  gameState Json? // Current game state
+  moves     Json[] // Array of moves
+
   // Results
-  result      MatchResult   @default(PENDING)
-  score       Int           @default(0)
-  duration    Int?          // in seconds
-  
+  result   MatchResult @default(PENDING)
+  score    Int         @default(0)
+  duration Int? // in seconds
+
   // Timestamps
-  createdAt   DateTime      @default(now())
-  startedAt   DateTime?
-  finishedAt  DateTime?
-  
+  createdAt  DateTime  @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+
   @@map("game_sessions")
 }
 
 model GameStatistic {
-  id       String @id @default(cuid())
-  
-  userId   String
-  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  gameId   String
-  game     Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gameId String
+  game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
   // Statistics
-  gamesPlayed    Int   @default(0)
-  gamesWon       Int   @default(0)
-  gamesLost      Int   @default(0)
-  gamesDrawn     Int   @default(0)
-  winRate        Float @default(0)
-  averageScore   Float @default(0)
-  bestScore      Int   @default(0)
-  totalPlayTime  Int   @default(0) // in seconds
-  
+  gamesPlayed   Int   @default(0)
+  gamesWon      Int   @default(0)
+  gamesLost     Int   @default(0)
+  gamesDrawn    Int   @default(0)
+  winRate       Float @default(0)
+  averageScore  Float @default(0)
+  bestScore     Int   @default(0)
+  totalPlayTime Int   @default(0) // in seconds
+
   // Rankings
-  currentRating  Int   @default(1200) // ELO-style rating
-  peakRating     Int   @default(1200)
-  
+  currentRating Int @default(1200) // ELO-style rating
+  peakRating    Int @default(1200)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   @@unique([userId, gameId])
   @@map("game_statistics")
 }
 
 model Achievement {
-  id          String @id @default(cuid())
-  name        String @unique
+  id          String          @id @default(cuid())
+  name        String          @unique
   description String
   icon        String?
   type        AchievementType
-  
+
   // Requirements
   requirements Json // e.g., {"gamesWon": 10, "gameType": "chess"}
   points       Int  @default(0)
-  
+
   isActive Boolean @default(true)
-  
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   // Relations
   userAchievements UserAchievement[]
-  
+
   @@map("achievements")
 }
 
 model UserAchievement {
-  id            String @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   userId        String
-  user          User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   achievementId String
   achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
-  
+
   unlockedAt DateTime @default(now())
-  
+
   @@unique([userId, achievementId])
   @@map("user_achievements")
 }
 
 model Payment {
-  id           String        @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   userId       String
-  user         User          @relation(fields: [userId], references: [id])
+  user         User        @relation(fields: [userId], references: [id])
   tournamentId String?
-  tournament   Tournament?   @relation(fields: [tournamentId], references: [id])
-  
+  tournament   Tournament? @relation(fields: [tournamentId], references: [id])
+
   // Payment details
-  amount       Float
-  currency     String        @default("USD")
-  type         PaymentType
-  status       PaymentStatus @default(PENDING)
-  
+  amount   Float
+  currency String        @default("USD")
+  type     PaymentType
+  status   PaymentStatus @default(PENDING)
+
   // Pesepay Integration Fields (Zimbabwe)
-  pesePayTransactionId  String?  @unique    // Pesepay transaction ID
-  pesePayReference      String?             // Merchant reference
-  paymentMethodCode     String?             // EcoCash, OneMoney, etc.
-  mobileMoneyNumber     String?             // Customer's mobile money number
-  
+  pesePayTransactionId String? @unique // Pesepay transaction ID
+  pesePayReference     String? // Merchant reference
+  paymentMethodCode    String? // EcoCash, OneMoney, etc.
+  mobileMoneyNumber    String? // Customer's mobile money number
+
   // Enhanced Payment Tracking
-  paymentInitiatedAt   DateTime?
-  paymentConfirmedAt   DateTime?
-  paymentFailedAt      DateTime?
-  failureReason        String?
-  
+  paymentInitiatedAt DateTime?
+  paymentConfirmedAt DateTime?
+  paymentFailedAt    DateTime?
+  failureReason      String?
+
   // Exchange rate support (USD to ZWL if needed)
-  exchangeRate         Float?              
-  localAmount          Float?              // Amount in local currency
-  localCurrency        String?             // ZWL, USD
-  
+  exchangeRate  Float?
+  localAmount   Float? // Amount in local currency
+  localCurrency String? // ZWL, USD
+
   // Legacy payment processors (kept for backward compatibility)
   stripePaymentId String?
   paypalPaymentId String?
-  
+
   // Enhanced metadata for Pesepay
-  metadata     Json?              // Store Pesepay response data
-  
+  metadata Json? // Store Pesepay response data
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   @@map("payments")
 }
 
@@ -405,45 +407,45 @@ enum PaymentType {
   PRIZE_PAYOUT
   SUBSCRIPTION
   PURCHASE
-  REFUND                    // NEW
-  PLATFORM_FEE             // NEW
-  WITHDRAWAL               // NEW
+  REFUND // NEW
+  PLATFORM_FEE // NEW
+  WITHDRAWAL // NEW
 }
 
 enum PaymentStatus {
   PENDING
-  PROCESSING               // NEW: Payment being processed by Pesepay
+  PROCESSING // NEW: Payment being processed by Pesepay
   COMPLETED
   FAILED
-  CANCELLED               // NEW: User cancelled
+  CANCELLED // NEW: User cancelled
   REFUNDED
-  EXPIRED                 // NEW: Payment link expired
+  EXPIRED // NEW: Payment link expired
 }
 
 // Zimbabwe-specific models
 model ZimbabweLocation {
-  id       String @id @default(cuid())
-  province String             // 10 provinces of Zimbabwe
-  city     String
-  latitude Float?
+  id        String  @id @default(cuid())
+  province  String // 10 provinces of Zimbabwe
+  city      String
+  latitude  Float?
   longitude Float?
-  isActive Boolean @default(true)
+  isActive  Boolean @default(true)
 
   @@unique([province, city])
   @@map("zimbabwe_locations")
 }
 
 model Institution {
-  id          String @id @default(cuid())
-  name        String @unique
-  type        String             // "university", "college", "polytechnic", "company"
-  city        String
-  province    String
-  website     String?
-  isActive    Boolean @default(true)
+  id       String  @id @default(cuid())
+  name     String  @unique
+  type     String // "university", "college", "polytechnic", "company"
+  city     String
+  province String
+  website  String?
+  isActive Boolean @default(true)
 
   // Statistics
-  totalUsers     Int @default(0)
+  totalUsers       Int @default(0)
   totalTournaments Int @default(0)
 
   createdAt DateTime @default(now())
@@ -453,28 +455,43 @@ model Institution {
 }
 
 model MobileMoneyProvider {
-  id          String @id @default(cuid())
-  name        String @unique        // "EcoCash", "OneMoney", "Telecash"
-  code        String @unique        // Pesepay payment method code
-  isActive    Boolean @default(true)
-  minAmount   Float                 // Minimum transaction amount
-  maxAmount   Float                 // Maximum transaction amount
-  feeStructure Json?                // Fee calculation rules
+  id           String  @id @default(cuid())
+  name         String  @unique // "EcoCash", "OneMoney", "Telecash"
+  code         String  @unique // Pesepay payment method code
+  isActive     Boolean @default(true)
+  minAmount    Float // Minimum transaction amount
+  maxAmount    Float // Maximum transaction amount
+  feeStructure Json? // Fee calculation rules
 
   @@map("mobile_money_providers")
 }
 
 // Enhanced enums for Zimbabwe
 enum TournamentCategory {
-  UNIVERSITY              // NEW
-  CORPORATE              // NEW
-  PUBLIC                 // NEW
-  INVITATION_ONLY        // NEW
+  UNIVERSITY // NEW
+  CORPORATE // NEW
+  PUBLIC // NEW
+  INVITATION_ONLY // NEW
 }
 
 enum VerificationLevel {
   UNVERIFIED
-  PHONE_VERIFIED         // NEW
-  ID_VERIFIED           // NEW
-  INSTITUTION_VERIFIED  // NEW
-} 
+  PHONE_VERIFIED // NEW
+  ID_VERIFIED // NEW
+  INSTITUTION_VERIFIED // NEW
+}
+
+model TournamentChatMessage {
+  id           String   @id @default(cuid())
+  tournamentId String
+  userId       String
+  text         String
+  createdAt    DateTime @default(now())
+
+  // Relations
+  tournament Tournament @relation(fields: [tournamentId], references: [id])
+  user       User       @relation(fields: [userId], references: [id])
+
+  @@index([tournamentId])
+  @@map("tournament_chat_messages")
+}

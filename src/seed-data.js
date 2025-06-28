@@ -148,6 +148,27 @@ async function main() {
 
     console.log(`✅ Created ${tournaments.length} tournaments`);
 
+    // Create sample chat messages for first tournament
+    console.log("Creating tournament chat messages...");
+    await prisma.tournamentChatMessage.createMany({
+      data: [
+        {
+          tournamentId: tournaments[0].id,
+          userId: users[0].id,
+          text: "Good luck everyone!",
+          createdAt: new Date(Date.now() - 3600 * 1000),
+        },
+        {
+          tournamentId: tournaments[0].id,
+          userId: users[1].id,
+          text: "May the best player win.",
+          createdAt: new Date(Date.now() - 3500 * 1000),
+        },
+      ],
+    });
+
+    console.log("✅ Seeded chat messages");
+
     console.log("🎉 Database seeded successfully!");
     console.log("\n📊 Summary:");
     console.log(`   Games: ${games.length}`);

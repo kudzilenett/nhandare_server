@@ -687,7 +687,7 @@ async function main() {
 
   // 5. Create test users with Zimbabwe details
   console.log("👥 Creating test users...");
-  const hashedPassword = await bcrypt.hash("password123", 12);
+  const hashedPassword = await bcrypt.hash("password123", 10);
 
   const users = [
     {
@@ -831,6 +831,28 @@ async function main() {
       prisma.tournament.create({ data: tournament })
     )
   );
+
+  // 6b. Seed sample chat messages for first tournament
+  console.log("💬 Creating tournament chat messages...");
+  if (createdTournaments.length > 0) {
+    // @ts-ignore – generated after Prisma schema update
+    await prisma.tournamentChatMessage.createMany({
+      data: [
+        {
+          tournamentId: createdTournaments[0].id,
+          userId: createdUsers[0].id,
+          text: "Good luck everyone!",
+          createdAt: new Date(Date.now() - 60 * 60 * 1000),
+        },
+        {
+          tournamentId: createdTournaments[0].id,
+          userId: createdUsers[1].id,
+          text: "May the best player win.",
+          createdAt: new Date(Date.now() - 55 * 60 * 1000),
+        },
+      ],
+    });
+  }
 
   // 7. Create achievements
   console.log("🏅 Creating achievements...");

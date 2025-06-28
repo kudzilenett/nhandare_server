@@ -420,14 +420,28 @@ export const initializeSocket = (io: SocketServer) => {
     socket.on("tournament:chat", async ({ tournamentId, text }) => {
       try {
         if (!text || !text.trim()) return;
+        const cleanText = text.trim().slice(0, 500);
         const msg = {
           id: Date.now().toString(36) + Math.random().toString(36).substring(2),
           userId: socket.user?.id,
           username: socket.user?.username,
-          text: text.trim(),
+          text: cleanText,
           timestamp: Date.now(),
         };
         io.to(`tournamentChat:${tournamentId}`).emit("tournament:chat", msg);
+
+        // Persist message to database (fire-and-forget)
+        const { prisma } = await import("../config/database");
+        // @ts-ignore – generated after Prisma schema update
+        await prisma.tournamentChatMessage.create({
+          data: {
+            id: msg.id,
+            tournamentId,
+            userId: socket.user?.id!,
+            text: cleanText,
+            createdAt: new Date(msg.timestamp),
+          },
+        });
       } catch (err) {
         logger.error("tournament chat error", err);
       }
