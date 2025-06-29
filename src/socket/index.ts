@@ -68,7 +68,10 @@ const authenticateSocket = async (socket: any, next: any) => {
   }
 };
 
+export let ioInstance: SocketServer | null = null;
+
 export const initializeSocket = (io: SocketServer) => {
+  ioInstance = io;
   // Apply authentication middleware
   io.use(authenticateSocket);
 

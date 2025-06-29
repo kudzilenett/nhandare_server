@@ -63,6 +63,8 @@ interface PaymentBody {
   amountDetails: {
     amount: number;
     currencyCode: string;
+    merchantAmount: number;
+    customerPayableAmount: number;
   };
   reasonForPayment: string;
   resultUrl: string;
@@ -160,7 +162,9 @@ export class PesePayService {
         amountDetails: {
           amount: request.amount,
           currencyCode: "USD",
-        },
+          merchantAmount: request.amount,
+          customerPayableAmount: request.amount,
+        } as any,
         reasonForPayment: "Gaming Platform Payment",
         resultUrl:
           request.resultUrl ||
@@ -179,7 +183,11 @@ export class PesePayService {
           phoneNumber: normalisedPhone,
           name: request.customerName,
         },
-        paymentMethodRequiredFields: request.paymentMethodFields || {},
+        paymentMethodRequiredFields:
+          request.paymentMethodFields ||
+          (request.paymentMethodCode?.toUpperCase().startsWith("PZW21")
+            ? { customerPhoneNumber: normalisedPhone }
+            : {}),
       };
 
       // For card payments, add terms and conditions URL
@@ -354,7 +362,9 @@ export class PesePayService {
       //     ensure backward-compatibility if the library fails.
       // ------------------------------------------------------------------
       const response = await axios.get(
-        `${API_BASE_URL}/v1/payments/${referenceNumber}`,
+        `${API_BASE_URL}/v1/payments/check-payment?referenceNumber=${encodeURIComponent(
+          referenceNumber
+        )}`,
         {
           headers: {
             "Content-Type": "application/json",
@@ -389,6 +399,33 @@ export class PesePayService {
 
       return decryptedResponse;
     } catch (error) {
+      // --------------------------------------------------------------
+      // Graceful handling: Pesepay often returns 404 or 500 with
+      // "transaction was not found" while the transaction is still
+      // pending (e.g., user hasn't approved the EcoCash prompt yet).
+      // See error payload examples in logs.  We'll treat these cases
+      // as a temporary "PENDING" status instead of bubbling an error.
+      // --------------------------------------------------------------
+      const axiosErr = error as any;
+      const msg: string | undefined = axiosErr?.response?.data?.message;
+      const statusCode: number | undefined = axiosErr?.response?.status;
+
+      const notFound = msg?.toLowerCase().includes("not found");
+
+      if (notFound || statusCode === 404) {
+        logger.info("Payment status not found yet – treating as PENDING", {
+          service: "nhandare-backend",
+          referenceNumber,
+        });
+
+        return {
+          referenceNumber,
+          transactionStatus: "PENDING",
+          message: msg,
+          success: true,
+        } as PaymentStatusResponse;
+      }
+
       this.logApiError("Payment Status Check", error);
       throw error;
     }
