@@ -1,4 +1,34 @@
 import axios from "axios";
+import https from "https";
+
+// Configure axios globally with insecure HTTP parser BEFORE importing pesepayclient
+// This ensures the pesepayclient package inherits these settings
+const globalHttpsAgent = new https.Agent({
+  keepAlive: true,
+  // @ts-ignore - Node's AgentOptions supports this flag but typings may not include it
+  insecureHTTPParser: true,
+});
+
+// Set the global agent for all axios instances
+axios.defaults.httpsAgent = globalHttpsAgent;
+axios.defaults.httpAgent = new (require("http").Agent)({
+  keepAlive: true,
+  // @ts-ignore
+  insecureHTTPParser: true,
+});
+
+// Also configure any axios instances created by other modules
+const originalCreate = axios.create;
+axios.create = function (config = {}) {
+  const instance = originalCreate.call(this, {
+    ...config,
+    httpsAgent: config.httpsAgent || globalHttpsAgent,
+    httpAgent: config.httpAgent || axios.defaults.httpAgent,
+  });
+  return instance;
+};
+
+// NOW import pesepayclient after axios is configured
 import {
   EncryptPayment,
   DecriptPayment,
@@ -77,6 +107,16 @@ export class PesePayService {
       hasIntegrationKey: !!INTEGRATION_KEY,
       hasEncryptionKey: !!ENCRYPTION_KEY,
       environment: process.env.NODE_ENV,
+      httpsAgent: {
+        configured: !!axios.defaults.httpsAgent,
+        insecureParser: (axios.defaults.httpsAgent as any)?.options
+          ?.insecureHTTPParser,
+      },
+      httpAgent: {
+        configured: !!axios.defaults.httpAgent,
+        insecureParser: (axios.defaults.httpAgent as any)?.options
+          ?.insecureHTTPParser,
+      },
     });
   }
 
@@ -104,6 +144,18 @@ export class PesePayService {
         isCardPayment: request.isCardPayment,
       });
 
+      // ------------------------------------------------------------------
+      // 🛈  Phone number formatting – Pesepay accepts numbers without the
+      //     leading "+".  We convert any "+263xxxxxxxxx" to "263xxxxxxxxx"
+      //     and any "07xxxxxxxx" to "2637xxxxxxxx".
+      // ------------------------------------------------------------------
+      const normalisedPhone = (() => {
+        const cleaned = request.phoneNumber.replace(/\D/g, "");
+        if (cleaned.startsWith("263")) return cleaned; // already 263…
+        if (cleaned.startsWith("07")) return `263${cleaned.substring(1)}`;
+        return cleaned; // fallback – send as-is
+      })();
+
       const paymentBody: PaymentBody = {
         amountDetails: {
           amount: request.amount,
@@ -124,7 +176,7 @@ export class PesePayService {
         paymentMethodCode: request.paymentMethodCode,
         customer: {
           email: request.email,
-          phoneNumber: request.phoneNumber,
+          phoneNumber: normalisedPhone,
           name: request.customerName,
         },
         paymentMethodRequiredFields: request.paymentMethodFields || {},
@@ -137,31 +189,115 @@ export class PesePayService {
         }/terms`;
       }
 
-      logger.info("=== Using PesePayClient InitiatePayment ===", {
+      logger.info("=== Using Direct PesePay API with Encryption ===", {
         service: "nhandare-backend",
         merchantReference: paymentBody.merchantReference,
+        paymentBody: {
+          amount: paymentBody.amountDetails.amount,
+          currencyCode: paymentBody.amountDetails.currencyCode,
+          paymentMethodCode: paymentBody.paymentMethodCode,
+          phoneNumber: paymentBody.customer?.phoneNumber,
+        },
       });
 
-      // Use the pesepayclient InitiatePayment function
-      const response = await InitiatePayment(
-        paymentBody,
-        ENCRYPTION_KEY,
-        INTEGRATION_KEY
+      // Use EncryptPayment from pesepayclient to encrypt the payload
+      const encryptedPayload = EncryptPayment(paymentBody, ENCRYPTION_KEY);
+
+      logger.info("Payload encrypted successfully", {
+        service: "nhandare-backend",
+        encryptedLength: encryptedPayload.length,
+      });
+
+      // Make direct HTTP request with our configured agent
+      const response = await axios.post(
+        `${API_BASE_URL}/v1/payments/initiate`,
+        { payload: encryptedPayload },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            authorization: INTEGRATION_KEY,
+          },
+          httpsAgent: globalHttpsAgent,
+          timeout: 30000, // 30 second timeout
+        }
       );
 
-      logger.info("Payment Initiation Response:", {
+      logger.info("Direct API Response:", {
         service: "nhandare-backend",
-        success: !!response,
-        referenceNumber: response?.referenceNumber,
-        hasRedirectUrl: !!response?.redirectUrl,
+        status: response.status,
+        dataLength: JSON.stringify(response.data).length,
       });
 
-      return {
-        ...response,
+      // Decrypt the response using DecriptPayment from pesepayclient
+      const decryptedResponse = DecriptPayment(
+        response.data.payload,
+        ENCRYPTION_KEY
+      );
+
+      if (!decryptedResponse) {
+        throw new Error("Failed to decrypt PesePay response");
+      }
+
+      logger.info("Response decrypted successfully", {
+        service: "nhandare-backend",
+        referenceNumber: decryptedResponse.referenceNumber,
+        transactionStatus: decryptedResponse.transactionStatus,
+        hasRedirectUrl: !!decryptedResponse.redirectUrl,
+      });
+
+      // Ensure we have required fields
+      if (!decryptedResponse.referenceNumber) {
+        logger.error("Missing referenceNumber in PesePay response", {
+          service: "nhandare-backend",
+          response: decryptedResponse,
+        });
+        throw new Error("Invalid payment response: missing referenceNumber");
+      }
+
+      const paymentResponse: PaymentResponse = {
+        referenceNumber: decryptedResponse.referenceNumber,
+        transactionReference: decryptedResponse.referenceNumber, // For compatibility
+        redirectUrl: decryptedResponse.redirectUrl,
+        pollUrl: decryptedResponse.pollUrl,
+        transactionStatus: decryptedResponse.transactionStatus,
+        transactionStatusDescription:
+          decryptedResponse.transactionStatusDescription,
+        paymentMethodDetails: decryptedResponse.paymentMethodDetails,
+        redirectRequired: decryptedResponse.redirectRequired || false,
         isHostedCheckout: request.isCardPayment || false,
+        // Include all other fields from the response
+        ...decryptedResponse,
       };
+
+      logger.info("Final Payment Response:", {
+        service: "nhandare-backend",
+        success: true,
+        referenceNumber: paymentResponse.referenceNumber,
+        hasRedirectUrl: !!paymentResponse.redirectUrl,
+        transactionStatus: paymentResponse.transactionStatus,
+      });
+
+      return paymentResponse;
     } catch (error) {
       this.logApiError("Payment Initiation", error);
+
+      // Log more detailed error information
+      logger.error("Payment Initiation Detailed Error:", {
+        service: "nhandare-backend",
+        error: {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+          response: error.response?.data,
+          status: error.response?.status,
+        },
+        paymentRequest: {
+          amount: request.amount,
+          paymentMethodCode: request.paymentMethodCode,
+          userId: request.userId,
+        },
+      });
+
       throw error;
     }
   }
@@ -181,20 +317,77 @@ export class PesePayService {
         referenceNumber,
       });
 
-      // Use the pesepayclient CheckPayment function
-      const response = await CheckPayment(
-        referenceNumber,
-        ENCRYPTION_KEY,
-        INTEGRATION_KEY
+      // ------------------------------------------------------------------
+      // 🛈  Primary approach – use pesepayclient's CheckPayment which
+      //     handles encryption/decryption and abstracts the HTTP call.
+      // ------------------------------------------------------------------
+      try {
+        const statusResponse = await CheckPayment(
+          referenceNumber,
+          ENCRYPTION_KEY,
+          INTEGRATION_KEY
+        );
+
+        if (statusResponse) {
+          logger.info("Payment Status (via CheckPayment):", {
+            service: "nhandare-backend",
+            transactionStatus: statusResponse.transactionStatus,
+          });
+          return statusResponse;
+        }
+
+        // If null/undefined fall through to fallback.
+        logger.warn("CheckPayment returned null, falling back to direct API", {
+          service: "nhandare-backend",
+          referenceNumber,
+        });
+      } catch (libErr: any) {
+        // Library failed – log and fall back
+        logger.warn("CheckPayment threw error, falling back", {
+          service: "nhandare-backend",
+          message: libErr?.message,
+        });
+      }
+
+      // ------------------------------------------------------------------
+      // 🛈  Fallback – direct HTTPS request (legacy). This path is kept to
+      //     ensure backward-compatibility if the library fails.
+      // ------------------------------------------------------------------
+      const response = await axios.get(
+        `${API_BASE_URL}/v1/payments/${referenceNumber}`,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            authorization: INTEGRATION_KEY,
+          },
+          httpsAgent: globalHttpsAgent,
+          timeout: 30000, // 30 second timeout
+        }
       );
 
-      logger.info("Payment Status Response:", {
+      logger.info("Direct Payment Status Response:", {
         service: "nhandare-backend",
-        success: !!response,
-        transactionStatus: response?.transactionStatus,
+        status: response.status,
+        dataLength: JSON.stringify(response.data).length,
       });
 
-      return response;
+      // Decrypt the response using DecriptPayment from pesepayclient
+      const decryptedResponse = DecriptPayment(
+        response.data.payload,
+        ENCRYPTION_KEY
+      );
+
+      if (!decryptedResponse) {
+        throw new Error("Failed to decrypt PesePay status response");
+      }
+
+      logger.info("Payment Status Response (fallback):", {
+        service: "nhandare-backend",
+        success: !!decryptedResponse,
+        transactionStatus: decryptedResponse?.transactionStatus,
+      });
+
+      return decryptedResponse;
     } catch (error) {
       this.logApiError("Payment Status Check", error);
       throw error;

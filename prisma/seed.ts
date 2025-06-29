@@ -777,7 +777,7 @@ async function main() {
       title: "University of Zimbabwe Chess Championship",
       description: "Annual chess tournament for UZ students and staff",
       gameId: createdGames[0].id, // Chess
-      entryFee: 5.0,
+      entryFee: 1.0,
       prizePool: 200.0,
       maxPlayers: 32,
       province: "Harare",
@@ -803,7 +803,7 @@ async function main() {
       title: "Bulawayo Draughts Open",
       description: "Open draughts tournament for all skill levels",
       gameId: createdGames[1].id, // Draughts
-      entryFee: 3.0,
+      entryFee: 1.0,
       prizePool: 150.0,
       maxPlayers: 24,
       province: "Bulawayo",

@@ -229,9 +229,10 @@ router.post(
           paymentMethodCode.toUpperCase().includes("MASTERCARD"),
         returnUrl:
           returnUrl ||
-          `${env.FRONTEND_URL}/tournament/${tournamentId}/payment/return`,
+          `nhandare://payments/return?tournamentId=${tournamentId}`,
         resultUrl:
-          resultUrl || `${env.FRONTEND_URL}/api/payments/webhook/pesepay`,
+          resultUrl ||
+          `http://localhost:${env.PORT}/api/payments/webhook/pesepay`,
       });
 
       res.json({
@@ -350,8 +351,179 @@ router.post("/webhook/pesepay", async (req: Request, res: Response) => {
 
     logger.info("Pesepay webhook received", { webhookData });
 
-    // TODO: Process webhook data based on Pesepay's webhook format
-    // This is a placeholder for now
+    // Process webhook data from PesePay
+    const {
+      referenceNumber,
+      transactionReference,
+      transactionStatus,
+      amount,
+      currencyCode,
+      resultUrl,
+      reasonForPayment,
+    } = webhookData;
+
+    const reference = referenceNumber || transactionReference;
+
+    if (!reference) {
+      logger.warn("Webhook received without reference number", { webhookData });
+      res.status(400).json({
+        success: false,
+        message: "No reference number provided",
+      });
+      return;
+    }
+
+    // Find the payment in our database
+    const payment = await prisma.payment.findFirst({
+      where: {
+        OR: [
+          { pesePayReference: reference },
+          { metadata: { path: ["pesepayReference"], equals: reference } },
+        ],
+      },
+      include: {
+        tournament: true,
+        user: true,
+      },
+    });
+
+    if (!payment) {
+      logger.warn("Payment not found for reference", {
+        reference,
+        webhookData,
+      });
+    } else {
+      // Update payment status based on webhook using actual PesePay statuses
+      let newStatus:
+        | "PENDING"
+        | "PROCESSING"
+        | "COMPLETED"
+        | "FAILED"
+        | "CANCELLED"
+        | "REFUNDED"
+        | "EXPIRED" = "PENDING";
+
+      // Map PesePay transaction status to our database status
+      const status = transactionStatus?.toUpperCase();
+
+      switch (status) {
+        case "SUCCESS":
+          newStatus = "COMPLETED";
+          break;
+
+        case "CANCELLED":
+          newStatus = "CANCELLED";
+          break;
+
+        case "PENDING":
+        case "INITIATED":
+          newStatus = "PENDING";
+          break;
+
+        case "PROCESSING":
+          newStatus = "PROCESSING";
+          break;
+
+        case "FAILED":
+        case "ERROR":
+        case "DECLINED":
+        case "AUTHORIZATION_FAILED":
+        case "INSUFFICIENT_FUNDS":
+        case "SERVICE_UNAVAILABLE":
+        case "TERMINATED":
+          newStatus = "FAILED";
+          break;
+
+        case "REVERSED":
+          newStatus = "REFUNDED";
+          break;
+
+        case "TIME_OUT":
+        case "CLOSED":
+        case "CLOSED_PERIOD_ELAPSED":
+          newStatus = "EXPIRED";
+          break;
+
+        case "PARTIALLY_PAID":
+          // For partially paid, keep as pending for now
+          newStatus = "PENDING";
+          break;
+
+        default:
+          logger.warn("Unknown PesePay transaction status", {
+            transactionStatus,
+            reference,
+          });
+          newStatus = "FAILED";
+      }
+
+      const existingMetadata = (payment.metadata as any) || {};
+
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: newStatus,
+          pesePayReference: reference,
+          metadata: {
+            ...existingMetadata,
+            webhookData,
+            updatedAt: new Date().toISOString(),
+          },
+          paymentConfirmedAt:
+            newStatus === "COMPLETED" ? new Date() : undefined,
+          paymentFailedAt: newStatus === "FAILED" ? new Date() : undefined,
+          failureReason:
+            newStatus === "FAILED"
+              ? webhookData.failureReason || "Payment failed"
+              : undefined,
+        },
+      });
+
+      // If payment is successful and it's a tournament entry, register the player
+      if (
+        newStatus === "COMPLETED" &&
+        payment.type === "ENTRY_FEE" &&
+        payment.tournamentId
+      ) {
+        try {
+          await prisma.tournamentPlayer.create({
+            data: {
+              userId: payment.userId,
+              tournamentId: payment.tournamentId,
+              joinedAt: new Date(),
+            },
+          });
+
+          // Update tournament player count
+          await prisma.tournament.update({
+            where: { id: payment.tournamentId },
+            data: {
+              currentPlayers: {
+                increment: 1,
+              },
+            },
+          });
+
+          logger.info("Player registered for tournament", {
+            userId: payment.userId,
+            tournamentId: payment.tournamentId,
+            paymentReference: reference,
+          });
+        } catch (error) {
+          logger.error("Error registering player for tournament", {
+            error: error instanceof Error ? error.message : error,
+            userId: payment.userId,
+            tournamentId: payment.tournamentId,
+          });
+        }
+      }
+
+      logger.info("Payment webhook processed successfully", {
+        paymentId: payment.id,
+        status: newStatus,
+        reference,
+      });
+    }
 
     res.json({
       success: true,

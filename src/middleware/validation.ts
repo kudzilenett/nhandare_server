@@ -96,7 +96,7 @@ export const schemas = {
     }),
     phoneNumber: joi
       .string()
-      .pattern(/^\+263[0-9]{9}$/)
+      .pattern(/^(\+263|263|07)[0-9]{8,9}$/)
       .optional()
       .messages({
         "string.pattern.base":
@@ -134,7 +134,7 @@ export const schemas = {
     lastName: joi.string().min(2).max(50).optional(),
     phoneNumber: joi
       .string()
-      .pattern(/^\+263[0-9]{9}$/)
+      .pattern(/^(\+263|263|07)[0-9]{8,9}$/)
       .optional()
       .messages({
         "string.pattern.base":
@@ -235,20 +235,25 @@ export const schemas = {
 
   // Payment schemas for Zimbabwe/Pesepay integration
   initiatePayment: joi.object({
-    tournamentId: joi.string().uuid().required().messages({
-      "any.required": "Tournament ID is required",
-      "string.guid": "Tournament ID must be a valid UUID",
-    }),
+    // Accept UUID or CUID/ULID style ids (20+ chars alphanumeric with - or _)
+    tournamentId: joi
+      .string()
+      .pattern(/^[a-zA-Z0-9_-]{20,}$/)
+      .required()
+      .messages({
+        "any.required": "Tournament ID is required",
+        "string.pattern.base": "Tournament ID is invalid",
+      }),
     paymentMethodCode: joi.string().required().messages({
       "any.required": "Payment method is required",
     }),
     mobileMoneyNumber: joi
       .string()
-      .pattern(/^\+263[0-9]{9}$/)
+      .pattern(/^(\+263|263|07)[0-9]{8,9}$/)
       .optional()
       .messages({
         "string.pattern.base":
-          "Mobile money number must be valid Zimbabwe format (+263XXXXXXXXX)",
+          "Mobile money number must be a valid Zimbabwe number (e.g., +263771234567)",
       }),
     returnUrl: joi.string().uri().optional(),
     resultUrl: joi.string().uri().optional(),
@@ -278,7 +283,7 @@ export const schemas = {
   validateZimbabwePhone: joi.object({
     phoneNumber: joi
       .string()
-      .pattern(/^\+263[0-9]{9}$/)
+      .pattern(/^(\+263|263|07)[0-9]{8,9}$/)
       .required()
       .messages({
         "string.pattern.base":
@@ -294,7 +299,7 @@ export const schemas = {
     tournamentId: joi.string().uuid().required(),
     mobileMoneyNumber: joi
       .string()
-      .pattern(/^\+263[0-9]{9}$/)
+      .pattern(/^(\+263|263|07)[0-9]{8,9}$/)
       .required()
       .messages({
         "string.pattern.base":

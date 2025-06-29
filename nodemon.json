@@ -1,0 +1,17 @@
+{
+  "watch": ["src"],
+  "ext": "ts,js,json",
+  "ignore": [
+    "node_modules",
+    "dist",
+    "logs",
+    "*.test.ts",
+    "*.spec.ts",
+    ".git",
+    "prisma/migrations",
+    "ecosystem.config.js"
+  ],
+  "delay": "2000",
+  "verbose": false,
+  "exec": "node --insecure-http-parser -r ts-node/register src/index.ts"
+}
