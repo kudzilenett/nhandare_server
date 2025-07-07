@@ -36,8 +36,8 @@ router.get(
   optionalAuth,
   asyncHandler(async (req: Request, res: Response) => {
     const {
-      page = 1,
-      limit = 20,
+      page: pageRaw = 1,
+      limit: limitRaw = 20,
       gameType,
       province,
       city,
@@ -46,6 +46,16 @@ router.get(
       sortBy = "points",
       sortOrder = "desc",
     } = req.query as any;
+
+    const page = Number(pageRaw);
+    const limit = Number(limitRaw);
+
+    if (Number.isNaN(page) || Number.isNaN(limit)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid pagination parameters",
+      });
+    }
 
     const skip = (page - 1) * limit;
     const where: any = {
@@ -176,8 +186,8 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const { gameId } = req.params;
     const {
-      page = 1,
-      limit = 20,
+      page: pageRaw2 = 1,
+      limit: limitRaw2 = 20,
       province,
       city,
       institution,
@@ -185,7 +195,16 @@ router.get(
       sortOrder = "desc",
     } = req.query as any;
 
-    const skip = (page - 1) * limit;
+    const page2 = Number(pageRaw2);
+    const limit2 = Number(limitRaw2);
+
+    if (Number.isNaN(page2) || Number.isNaN(limit2)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid pagination parameters" });
+    }
+
+    const skip = (page2 - 1) * limit2;
 
     // Verify game exists
     const game = await prisma.game.findUnique({
@@ -214,7 +233,7 @@ router.get(
     const [gameStats, total] = await Promise.all([
       prisma.gameStatistic.findMany({
         skip,
-        take: limit,
+        take: limit2,
         where: {
           gameId,
           user: userWhere,
@@ -294,7 +313,7 @@ router.get(
       }
     }
 
-    const totalPages = Math.ceil(total / limit);
+    const totalPages = Math.ceil(total / limit2);
 
     res.json({
       success: true,
@@ -302,12 +321,12 @@ router.get(
         game,
         leaderboard: leaderboardData,
         pagination: {
-          currentPage: page,
+          currentPage: page2,
           totalPages,
           totalItems: total,
-          hasNextPage: page < totalPages,
-          hasPreviousPage: page > 1,
-          limit,
+          hasNextPage: page2 < totalPages,
+          hasPreviousPage: page2 > 1,
+          limit: limit2,
         },
         currentUser: currentUserPosition,
       },

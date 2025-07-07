@@ -31,6 +31,7 @@ import matchRoutes from "./routes/matches";
 import leaderboardRoutes from "./routes/leaderboard";
 import paymentRoutes from "./routes/payments";
 import zimbabweRoutes from "./routes/zimbabwe";
+import matchmakingRoutes from "./routes/matchmaking";
 
 // Import socket handlers
 import { initializeSocket } from "./socket";
@@ -47,6 +48,9 @@ const io = new Server(server, {
     credentials: true,
   },
 });
+
+// Attach Socket.io instance to Express app for route access
+app.set("io", io);
 
 // Trust proxy for accurate IP addresses
 app.set("trust proxy", isProduction ? 1 : false);
@@ -122,6 +126,7 @@ app.get("/health", async (req, res) => {
 // API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/games", matchmakingRoutes);
 app.use("/api/games", gameRoutes);
 app.use("/api/tournaments", tournamentRoutes);
 app.use("/api/matches", matchRoutes);

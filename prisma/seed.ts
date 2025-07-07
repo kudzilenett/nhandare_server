@@ -1,16 +1,42 @@
 /// <reference types="node" />
 import { PrismaClient } from "@prisma/client";
-import { TournamentCategory, AchievementType } from "@prisma/client";
+import {
+  TournamentCategory,
+  AchievementType,
+  TournamentStatus,
+  MatchStatus,
+  MatchResult,
+  PaymentStatus,
+  PaymentType,
+} from "@prisma/client";
 import * as bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
+// Helper function to generate random date within a range
+function randomDate(start: Date, end: Date): Date {
+  return new Date(
+    start.getTime() + Math.random() * (end.getTime() - start.getTime())
+  );
+}
+
+// Helper to generate realistic Zimbabwe phone numbers
+function generateZimbabwePhone(): string {
+  const prefixes = ["263771", "263772", "263773", "263774", "263778"];
+  const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+  const suffix = Math.floor(Math.random() * 900000) + 100000;
+  return `+${prefix}${suffix}`;
+}
+
 async function main() {
-  console.log("🇿🇼 Seeding Zimbabwe gaming platform...");
+  console.log("🇿🇼 Seeding comprehensive Zimbabwe gaming platform (2025)...");
 
   // Clean up existing data
   await prisma.userAchievement.deleteMany();
   await prisma.achievement.deleteMany();
+  await prisma.tournamentChatMessage.deleteMany();
+  // Note: ChallengeInvitation model may not exist in generated client yet
+  // await prisma.challengeInvitation.deleteMany();
   await prisma.gameStatistic.deleteMany();
   await prisma.gameSession.deleteMany();
   await prisma.match.deleteMany();
@@ -26,7 +52,7 @@ async function main() {
   // 1. Create Zimbabwe locations
   console.log("📍 Creating Zimbabwe locations...");
   const locations = [
-    // Harare Province
+    // Major cities with coordinates
     {
       province: "Harare",
       city: "Harare",
@@ -39,56 +65,8 @@ async function main() {
       latitude: -18.01,
       longitude: 31.07,
     },
-    {
-      province: "Harare",
-      city: "Epworth",
-      latitude: -17.89,
-      longitude: 31.15,
-    },
-    {
-      province: "Harare",
-      city: "Ruwa",
-      latitude: -17.89,
-      longitude: 31.24,
-    },
-    {
-      province: "Harare",
-      city: "Norton",
-      latitude: -17.88,
-      longitude: 30.7,
-    },
-    {
-      province: "Harare",
-      city: "Borrowdale",
-      latitude: -17.8,
-      longitude: 31.08,
-    },
-    {
-      province: "Harare",
-      city: "Avondale",
-      latitude: -17.82,
-      longitude: 31.04,
-    },
-    {
-      province: "Harare",
-      city: "Mbare",
-      latitude: -17.84,
-      longitude: 31.05,
-    },
-    {
-      province: "Harare",
-      city: "Hatfield",
-      latitude: -17.83,
-      longitude: 31.06,
-    },
-    {
-      province: "Harare",
-      city: "Mount Pleasant",
-      latitude: -17.81,
-      longitude: 31.07,
-    },
-
-    // Bulawayo Province
+    { province: "Harare", city: "Epworth", latitude: -17.89, longitude: 31.15 },
+    { province: "Harare", city: "Norton", latitude: -17.88, longitude: 30.7 },
     {
       province: "Bulawayo",
       city: "Bulawayo",
@@ -102,44 +80,6 @@ async function main() {
       longitude: 28.55,
     },
     {
-      province: "Bulawayo",
-      city: "Pumula",
-      latitude: -20.18,
-      longitude: 28.57,
-    },
-    {
-      province: "Bulawayo",
-      city: "Entumbane",
-      latitude: -20.14,
-      longitude: 28.56,
-    },
-    {
-      province: "Bulawayo",
-      city: "Nkulumane",
-      latitude: -20.17,
-      longitude: 28.56,
-    },
-    {
-      province: "Bulawayo",
-      city: "Magwegwe",
-      latitude: -20.13,
-      longitude: 28.54,
-    },
-    {
-      province: "Bulawayo",
-      city: "Mpopoma",
-      latitude: -20.15,
-      longitude: 28.58,
-    },
-    {
-      province: "Bulawayo",
-      city: "Luveve",
-      latitude: -20.11,
-      longitude: 28.53,
-    },
-
-    // Manicaland Province
-    {
       province: "Manicaland",
       city: "Mutare",
       latitude: -18.9707,
@@ -152,312 +92,46 @@ async function main() {
       longitude: 32.1254,
     },
     {
-      province: "Manicaland",
-      city: "Chipinge",
-      latitude: -20.1879,
-      longitude: 32.6235,
-    },
-    {
-      province: "Manicaland",
-      city: "Nyanga",
-      latitude: -18.2167,
-      longitude: 32.75,
-    },
-    {
-      province: "Manicaland",
-      city: "Chimanimani",
-      latitude: -19.8,
-      longitude: 32.8667,
-    },
-    {
-      province: "Manicaland",
-      city: "Makoni",
-      latitude: -18.85,
-      longitude: 32.4,
-    },
-    {
-      province: "Manicaland",
-      city: "Penhalonga",
-      latitude: -18.8833,
-      longitude: 32.6833,
-    },
-    {
-      province: "Manicaland",
-      city: "Hauna",
-      latitude: -18.95,
-      longitude: 32.55,
-    },
-
-    // Mashonaland Central Province
-    {
       province: "Mashonaland Central",
       city: "Bindura",
       latitude: -17.3017,
       longitude: 31.3314,
     },
     {
-      province: "Mashonaland Central",
-      city: "Shamva",
-      latitude: -17.3167,
-      longitude: 31.5833,
-    },
-    {
-      province: "Mashonaland Central",
-      city: "Centenary",
-      latitude: -16.7833,
-      longitude: 31.1167,
-    },
-    {
-      province: "Mashonaland Central",
-      city: "Mount Darwin",
-      latitude: -16.7667,
-      longitude: 31.5833,
-    },
-    {
-      province: "Mashonaland Central",
-      city: "Guruve",
-      latitude: -16.65,
-      longitude: 30.7,
-    },
-    {
-      province: "Mashonaland Central",
-      city: "Mazowe",
-      latitude: -17.5167,
-      longitude: 30.9667,
-    },
-    {
-      province: "Mashonaland Central",
-      city: "Rushinga",
-      latitude: -16.8333,
-      longitude: 32.0667,
-    },
-
-    // Mashonaland East Province
-    {
       province: "Mashonaland East",
       city: "Marondera",
       latitude: -18.1851,
-      longitude: 31.5513,
+      longitude: 31.5539,
     },
-    {
-      province: "Mashonaland East",
-      city: "Macheke",
-      latitude: -18.15,
-      longitude: 31.85,
-    },
-    {
-      province: "Mashonaland East",
-      city: "Wedza",
-      latitude: -18.4,
-      longitude: 31.5167,
-    },
-    {
-      province: "Mashonaland East",
-      city: "Murehwa",
-      latitude: -17.65,
-      longitude: 31.7833,
-    },
-    {
-      province: "Mashonaland East",
-      city: "Seke",
-      latitude: -17.95,
-      longitude: 31.1833,
-    },
-    {
-      province: "Mashonaland East",
-      city: "Goromonzi",
-      latitude: -17.8667,
-      longitude: 31.4,
-    },
-    {
-      province: "Mashonaland East",
-      city: "Hwedza",
-      latitude: -18.6167,
-      longitude: 31.5167,
-    },
-
-    // Mashonaland West Province
     {
       province: "Mashonaland West",
       city: "Chinhoyi",
-      latitude: -17.3572,
-      longitude: 30.1985,
+      latitude: -17.3667,
+      longitude: 30.2,
     },
-    {
-      province: "Mashonaland West",
-      city: "Kariba",
-      latitude: -16.5167,
-      longitude: 28.8,
-    },
-    {
-      province: "Mashonaland West",
-      city: "Kadoma",
-      latitude: -18.3333,
-      longitude: 29.9167,
-    },
-    {
-      province: "Mashonaland West",
-      city: "Chegutu",
-      latitude: -18.1333,
-      longitude: 30.1333,
-    },
-    {
-      province: "Mashonaland West",
-      city: "Banket",
-      latitude: -17.3833,
-      longitude: 30.4,
-    },
-    {
-      province: "Mashonaland West",
-      city: "Trelawney",
-      latitude: -17.8333,
-      longitude: 29.8667,
-    },
-    {
-      province: "Mashonaland West",
-      city: "Makonde",
-      latitude: -17.15,
-      longitude: 30.3,
-    },
-
-    // Masvingo Province
     {
       province: "Masvingo",
       city: "Masvingo",
       latitude: -20.0637,
-      longitude: 30.8408,
-    },
-    {
-      province: "Masvingo",
-      city: "Chiredzi",
-      latitude: -21.05,
-      longitude: 31.6667,
-    },
-    {
-      province: "Masvingo",
-      city: "Triangle",
-      latitude: -21.0167,
-      longitude: 31.4833,
-    },
-    {
-      province: "Masvingo",
-      city: "Bikita",
-      latitude: -20.0833,
-      longitude: 31.3,
-    },
-    {
-      province: "Masvingo",
-      city: "Gutu",
-      latitude: -19.6333,
-      longitude: 31.15,
-    },
-    {
-      province: "Masvingo",
-      city: "Zaka",
-      latitude: -20.4,
-      longitude: 31.3833,
-    },
-    {
-      province: "Masvingo",
-      city: "Chivi",
-      latitude: -20.65,
-      longitude: 30.9,
-    },
-
-    // Matabeleland North Province
-    {
-      province: "Matabeleland North",
-      city: "Victoria Falls",
-      latitude: -17.9243,
-      longitude: 25.8572,
+      longitude: 30.8267,
     },
     {
       province: "Matabeleland North",
       city: "Hwange",
-      latitude: -18.3644,
-      longitude: 26.5023,
+      latitude: -18.3759,
+      longitude: 26.5019,
     },
-    {
-      province: "Matabeleland North",
-      city: "Lupane",
-      latitude: -18.9333,
-      longitude: 27.8,
-    },
-    {
-      province: "Matabeleland North",
-      city: "Tsholotsho",
-      latitude: -19.75,
-      longitude: 27.7667,
-    },
-    {
-      province: "Matabeleland North",
-      city: "Binga",
-      latitude: -17.6167,
-      longitude: 27.3333,
-    },
-    {
-      province: "Matabeleland North",
-      city: "Kamativi",
-      latitude: -18.35,
-      longitude: 26.3167,
-    },
-    {
-      province: "Matabeleland North",
-      city: "Dete",
-      latitude: -18.7167,
-      longitude: 26.9333,
-    },
-
-    // Matabeleland South Province
     {
       province: "Matabeleland South",
       city: "Gwanda",
-      latitude: -20.9334,
-      longitude: 29.002,
+      latitude: -20.9333,
+      longitude: 29.0167,
     },
-    {
-      province: "Matabeleland South",
-      city: "Beitbridge",
-      latitude: -22.2167,
-      longitude: 30.0,
-    },
-    {
-      province: "Matabeleland South",
-      city: "Plumtree",
-      latitude: -20.4833,
-      longitude: 27.8167,
-    },
-    {
-      province: "Matabeleland South",
-      city: "Esigodini",
-      latitude: -20.3167,
-      longitude: 28.9333,
-    },
-    {
-      province: "Matabeleland South",
-      city: "Filabusi",
-      latitude: -20.5167,
-      longitude: 29.2833,
-    },
-    {
-      province: "Matabeleland South",
-      city: "Maphisa",
-      latitude: -20.9167,
-      longitude: 29.5167,
-    },
-    {
-      province: "Matabeleland South",
-      city: "West Nicholson",
-      latitude: -21.0667,
-      longitude: 29.4167,
-    },
-
-    // Midlands Province
     {
       province: "Midlands",
       city: "Gweru",
-      latitude: -19.4503,
-      longitude: 29.8119,
+      latitude: -19.4167,
+      longitude: 29.8167,
     },
     {
       province: "Midlands",
@@ -465,41 +139,9 @@ async function main() {
       latitude: -18.9167,
       longitude: 29.8167,
     },
-    {
-      province: "Midlands",
-      city: "Shurugwi",
-      latitude: -19.6667,
-      longitude: 30.0167,
-    },
-    {
-      province: "Midlands",
-      city: "Zvishavane",
-      latitude: -20.3333,
-      longitude: 30.0667,
-    },
-    {
-      province: "Midlands",
-      city: "Redcliff",
-      latitude: -19.0333,
-      longitude: 29.7833,
-    },
-    {
-      province: "Midlands",
-      city: "Gokwe",
-      latitude: -18.2167,
-      longitude: 28.9333,
-    },
-    {
-      province: "Midlands",
-      city: "Lalapanzi",
-      latitude: -19.55,
-      longitude: 29.75,
-    },
   ];
 
-  await prisma.zimbabweLocation.createMany({
-    data: locations,
-  });
+  await prisma.zimbabweLocation.createMany({ data: locations });
 
   // 2. Create institutions
   console.log("🏫 Creating institutions...");
@@ -507,177 +149,163 @@ async function main() {
     {
       name: "University of Zimbabwe",
       type: "university",
-      city: "Harare",
       province: "Harare",
-      website: "https://www.uz.ac.zw",
+      city: "Harare",
     },
     {
-      name: "National University of Science and Technology",
+      name: "National University of Science & Technology",
       type: "university",
-      city: "Bulawayo",
       province: "Bulawayo",
-      website: "https://www.nust.ac.zw",
+      city: "Bulawayo",
     },
     {
       name: "Midlands State University",
       type: "university",
-      city: "Gweru",
       province: "Midlands",
-      website: "https://www.msu.ac.zw",
+      city: "Gweru",
     },
     {
-      name: "Harare Institute of Technology",
+      name: "Africa University",
       type: "university",
-      city: "Harare",
-      province: "Harare",
-      website: "https://www.hit.ac.zw",
+      province: "Manicaland",
+      city: "Mutare",
     },
     {
       name: "Chinhoyi University of Technology",
       type: "university",
-      city: "Chinhoyi",
       province: "Mashonaland West",
-      website: "https://www.cut.ac.zw",
-    },
-    {
-      name: "Great Zimbabwe University",
-      type: "university",
-      city: "Masvingo",
-      province: "Masvingo",
-      website: "https://www.gzu.ac.zw",
+      city: "Chinhoyi",
     },
     {
       name: "Bindura University of Science Education",
       type: "university",
-      city: "Bindura",
       province: "Mashonaland Central",
-      website: "https://www.buse.ac.zw",
+      city: "Bindura",
     },
-    // Major companies
+    {
+      name: "Great Zimbabwe University",
+      type: "university",
+      province: "Masvingo",
+      city: "Masvingo",
+    },
+    {
+      name: "CBZ Holdings",
+      type: "company",
+      province: "Harare",
+      city: "Harare",
+    },
     {
       name: "Econet Wireless",
       type: "company",
-      city: "Harare",
       province: "Harare",
-      website: "https://www.econet.co.zw",
-    },
-    {
-      name: "CBZ Bank",
-      type: "company",
       city: "Harare",
-      province: "Harare",
-      website: "https://www.cbz.co.zw",
     },
     {
       name: "Delta Corporation",
       type: "company",
-      city: "Harare",
       province: "Harare",
-      website: "https://www.delta.co.zw",
+      city: "Harare",
+    },
+    {
+      name: "OK Zimbabwe",
+      type: "company",
+      province: "Harare",
+      city: "Harare",
+    },
+    {
+      name: "Zimplats",
+      type: "company",
+      province: "Mashonaland West",
+      city: "Chinhoyi",
     },
   ];
 
-  await prisma.institution.createMany({
-    data: institutions,
-  });
+  await prisma.institution.createMany({ data: institutions });
 
   // 3. Create mobile money providers
-  console.log("💰 Creating mobile money providers...");
+  console.log("📱 Creating mobile money providers...");
   const mobileMoneyProviders = [
     {
       name: "EcoCash",
-      code: "PZW211",
-      minAmount: 1.0,
-      maxAmount: 3000.0,
-      feeStructure: {
-        type: "percentage",
-        rate: 0.01,
-        minimumFee: 0.05,
-      },
+      code: "ECOCASH",
+      isActive: true,
+      minAmount: 0,
+      maxAmount: 10000,
     },
     {
-      name: "Zimswitch USD",
-      code: "PZW215",
-      minAmount: 0.1,
-      maxAmount: 3000.0,
-      feeStructure: {
-        type: "percentage",
-        rate: 0.02,
-        minimumFee: 0.1,
-      },
+      name: "OneMoney",
+      code: "ONEMONEY",
+      isActive: true,
+      minAmount: 0,
+      maxAmount: 10000,
     },
     {
-      name: "Innbucks USD",
-      code: "PZW212",
-      minAmount: 1.0,
-      maxAmount: 1000.0,
-      feeStructure: {
-        type: "percentage",
-        rate: 0.015,
-        minimumFee: 0.05,
-      },
+      name: "Telecash",
+      code: "TELECASH",
+      isActive: true,
+      minAmount: 0,
+      maxAmount: 10000,
+    },
+    {
+      name: "ZimSwitch",
+      code: "ZIMSWITCH",
+      isActive: true,
+      minAmount: 0,
+      maxAmount: 10000,
     },
   ];
 
-  await prisma.mobileMoneyProvider.createMany({
-    data: mobileMoneyProviders,
-  });
+  await prisma.mobileMoneyProvider.createMany({ data: mobileMoneyProviders });
 
-  // 4. Create Zimbabwe-appropriate games
+  // 4. Create games
   console.log("🎮 Creating games...");
   const games = [
     {
       name: "Chess",
-      description: "Strategic board game popular in Zimbabwean universities",
+      description: "Strategic board game for two players",
       emoji: "♟️",
       minPlayers: 2,
       maxPlayers: 2,
-      averageTimeMs: 900000, // 15 minutes
-      rules: {
-        timeControl: "15+10",
-        rules: "FIDE standard chess rules",
-        ratingsystem: "ELO",
-      },
+      averageTimeMs: 1800000, // 30 minutes
       isActive: true,
+      rules: { piece_movement: "standard", time_control: "30+0" },
+      settings: {
+        board_size: "8x8",
+        starting_position: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR",
+      },
     },
     {
-      name: "Draughts",
-      description: "Traditional board game played across Zimbabwe",
+      name: "Checkers",
+      description: "Classic strategy game also known as Draughts",
       emoji: "🔴",
       minPlayers: 2,
       maxPlayers: 2,
-      averageTimeMs: 600000, // 10 minutes
-      rules: {
-        variant: "International draughts",
-        boardSize: "10x10",
-      },
+      averageTimeMs: 1200000, // 20 minutes
       isActive: true,
+      rules: { board_size: "8x8", mandatory_capture: true },
+      settings: { variant: "international" },
     },
     {
-      name: "Whot!",
-      description: "Popular Zimbabwean card game",
-      emoji: "🃏",
-      minPlayers: 2,
-      maxPlayers: 6,
-      averageTimeMs: 900000, // 15 minutes
-      rules: {
-        cardCount: 108,
-        specialCards: ["Pick 2", "Pick 3", "General Market", "Hold On"],
-      },
-      isActive: true,
-    },
-    {
-      name: "Connect 4",
-      description: "Four in a row - quick competitive matches",
-      emoji: "🔵",
+      name: "Tic Tac Toe",
+      description: "Simple strategy game on a 3x3 grid",
+      emoji: "⭕",
       minPlayers: 2,
       maxPlayers: 2,
       averageTimeMs: 300000, // 5 minutes
-      rules: {
-        boardSize: "7x6",
-        winCondition: "4 in a row",
-      },
       isActive: true,
+      rules: { board_size: "3x3", win_condition: "3_in_a_row" },
+      settings: { symbols: ["X", "O"] },
+    },
+    {
+      name: "Connect 4",
+      description: "Connect four pieces in a row to win",
+      emoji: "🔵",
+      minPlayers: 2,
+      maxPlayers: 2,
+      averageTimeMs: 900000, // 15 minutes
+      isActive: true,
+      rules: { board_size: "7x6", win_condition: "4_in_a_row" },
+      settings: { gravity: true },
     },
   ];
 
@@ -685,193 +313,636 @@ async function main() {
     games.map((game) => prisma.game.create({ data: game }))
   );
 
-  // 5. Create test users with Zimbabwe details
-  console.log("👥 Creating test users...");
-  const hashedPassword = await bcrypt.hash("password123", 10);
-
-  const users = [
+  // 5. Create comprehensive users (50 users for extensive testing)
+  console.log("👥 Creating comprehensive user profiles...");
+  const userProfiles: any[] = [
+    // Admin user
     {
-      email: "tafara.chess@uz.ac.zw",
-      username: "TafaraChessKing",
-      password: hashedPassword,
-      firstName: "Tafara",
-      lastName: "Mukamuri",
-      phoneNumber: "+263771234567",
+      email: "admin@nhandare.co.zw",
+      username: "admin",
+      password: await bcrypt.hash("admin123", 10),
+      firstName: "System",
+      lastName: "Administrator",
+      phoneNumber: generateZimbabwePhone(),
       province: "Harare",
       city: "Harare",
-      location: "Harare, Harare",
-      institution: "University of Zimbabwe",
-      isStudent: true,
-      preferredLanguage: "en",
-      isVerified: true,
-      points: 1250,
-      gamesPlayed: 45,
-      gamesWon: 32,
-      winRate: 0.71,
-    },
-    {
-      email: "chipo.gamer@nust.ac.zw",
-      username: "ChipoGamerQueen",
-      password: hashedPassword,
-      firstName: "Chipo",
-      lastName: "Ndebele",
-      phoneNumber: "+263712345678",
-      province: "Bulawayo",
-      city: "Bulawayo",
-      location: "Bulawayo, Bulawayo",
-      institution: "National University of Science and Technology",
-      isStudent: true,
-      preferredLanguage: "nd",
-      isVerified: true,
-      points: 980,
-      gamesPlayed: 38,
-      gamesWon: 23,
-      winRate: 0.61,
-    },
-    {
-      email: "takudzwa.pro@gmail.com",
-      username: "TakudzwaStrategyPro",
-      password: hashedPassword,
-      firstName: "Takudzwa",
-      lastName: "Chimbindi",
-      phoneNumber: "+263787654321",
-      province: "Midlands",
-      city: "Gweru",
-      location: "Gweru, Midlands",
-      institution: "Midlands State University",
-      isStudent: true,
-      preferredLanguage: "sn",
-      isVerified: true,
-      points: 1450,
-      gamesPlayed: 52,
-      gamesWon: 38,
-      winRate: 0.73,
-    },
-    {
-      email: "admin@nhandare.zw",
-      username: "NhandareAdmin",
-      password: hashedPassword,
-      firstName: "Admin",
-      lastName: "User",
-      phoneNumber: "+263771000000",
-      province: "Harare",
-      city: "Harare",
-      location: "Harare, Harare",
-      institution: "Nhandare Gaming Platform",
-      isStudent: false,
-      preferredLanguage: "en",
-      isVerified: true,
+      location: "Harare, Zimbabwe",
       isActive: true,
-      points: 0,
+      isVerified: true,
+      points: 10000,
+      rank: 1,
     },
   ];
 
+  // Generate 49 more realistic users
+  const firstNames = [
+    "Tendai",
+    "Chipo",
+    "Tinashe",
+    "Nyasha",
+    "Blessing",
+    "Tatenda",
+    "Chiedza",
+    "Anesu",
+    "Rutendo",
+    "Farai",
+    "Panashe",
+    "Nokutenda",
+    "Takudzwa",
+    "Chamu",
+    "Rudo",
+    "Simba",
+    "Tafadzwa",
+    "Vimbai",
+    "Chenai",
+    "Mukamuri",
+    "Tapiwanashe",
+    "Fungai",
+    "Tadiwa",
+    "Nyaradzo",
+    "Munyaradzi",
+    "Tariro",
+    "Chengeto",
+    "Tarisai",
+    "Shamiso",
+    "Tawanda",
+  ];
+
+  const lastNames = [
+    "Moyo",
+    "Ncube",
+    "Sibanda",
+    "Dube",
+    "Nyoni",
+    "Mthembu",
+    "Banda",
+    "Phiri",
+    "Mwanza",
+    "Soko",
+    "Mukamuri",
+    "Chigumbura",
+    "Madziwa",
+    "Marowa",
+    "Chidzonga",
+    "Mafukidze",
+    "Musiyiwa",
+    "Mudzingwa",
+    "Chipunza",
+    "Muchena",
+    "Mutapa",
+    "Zimbabwean",
+  ];
+
+  const provinces = [
+    "Harare",
+    "Bulawayo",
+    "Manicaland",
+    "Mashonaland Central",
+    "Mashonaland East",
+    "Mashonaland West",
+    "Masvingo",
+    "Matabeleland North",
+    "Matabeleland South",
+    "Midlands",
+  ];
+  const universitiesAndCompanies = [
+    "University of Zimbabwe",
+    "National University of Science & Technology",
+    "Midlands State University",
+    "CBZ Holdings",
+    "Econet Wireless",
+    "Delta Corporation",
+  ];
+
+  for (let i = 0; i < 49; i++) {
+    const firstName = firstNames[Math.floor(Math.random() * firstNames.length)];
+    const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
+    const province = provinces[Math.floor(Math.random() * provinces.length)];
+    const isStudent = Math.random() < 0.6; // 60% students
+
+    userProfiles.push({
+      email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}${i}@${
+        isStudent ? "student." : ""
+      }nhandare.co.zw`,
+      username: `${firstName.toLowerCase()}_${lastName.toLowerCase()}_${i}`,
+      password: await bcrypt.hash("password123", 10),
+      firstName,
+      lastName,
+      phoneNumber: generateZimbabwePhone(),
+      ecocashNumber: Math.random() < 0.8 ? generateZimbabwePhone() : null,
+      mobileMoneyProvider:
+        Math.random() < 0.8
+          ? Math.random() < 0.7
+            ? "ECOCASH"
+            : "ONEMONEY"
+          : null,
+      province,
+      city:
+        province === "Harare"
+          ? "Harare"
+          : province === "Bulawayo"
+          ? "Bulawayo"
+          : "Main City",
+      location: `${province}, Zimbabwe`,
+      isStudent,
+      institution: isStudent
+        ? universitiesAndCompanies[Math.floor(Math.random() * 3)]
+        : universitiesAndCompanies[
+            Math.floor(Math.random() * universitiesAndCompanies.length)
+          ],
+      dateOfBirth: randomDate(new Date("1990-01-01"), new Date("2005-12-31")),
+      gender: Math.random() < 0.5 ? "male" : "female",
+      isActive: true,
+      isVerified: Math.random() < 0.7, // 70% verified
+      points: Math.floor(Math.random() * 5000) + 100,
+      rank: Math.floor(Math.random() * 1000) + 2,
+      gamesPlayed: Math.floor(Math.random() * 100) + 5,
+      gamesWon: Math.floor(Math.random() * 50) + 2,
+      winRate: Math.random() * 0.6 + 0.2, // 20% to 80% win rate
+      bio: `Gaming enthusiast from ${province}. Love strategic games!`,
+      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${firstName}${lastName}`,
+      createdAt: randomDate(new Date("2024-01-01"), new Date("2024-12-31")),
+      lastLogin: randomDate(new Date("2025-01-01"), new Date()),
+    });
+  }
+
   const createdUsers = await Promise.all(
-    users.map((user) => prisma.user.create({ data: user }))
+    userProfiles.map((user) => prisma.user.create({ data: user }))
   );
 
-  // 6. Create sample tournaments
-  console.log("🏆 Creating sample tournaments...");
-  const tournaments = [
+  // 6. Create comprehensive tournaments (20 tournaments in various states)
+  console.log("🏆 Creating comprehensive tournaments...");
+  const currentDate = new Date();
+  const oneWeekAgo = new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const oneWeekFromNow = new Date(
+    currentDate.getTime() + 7 * 24 * 60 * 60 * 1000
+  );
+  const oneMonthFromNow = new Date(
+    currentDate.getTime() + 30 * 24 * 60 * 60 * 1000
+  );
+
+  const tournamentTemplates: any[] = [
+    // Open tournaments
     {
-      title: "University of Zimbabwe Chess Championship",
-      description: "Annual chess tournament for UZ students and staff",
-      gameId: createdGames[0].id, // Chess
-      entryFee: 1.0,
-      prizePool: 200.0,
-      maxPlayers: 32,
+      title: "Zimbabwe National Chess Championship 2025",
+      description: "Premier chess tournament featuring Zimbabwe's best players",
+      gameId: createdGames[0].id,
+      entryFee: 5.0,
+      prizePool: 500.0,
+      maxPlayers: 64,
+      status: TournamentStatus.OPEN,
       province: "Harare",
       city: "Harare",
-      location: "UZ Campus, Harare",
-      venue: "University of Zimbabwe Main Hall",
+      location: "Rainbow Towers, Harare",
+      venue: "Rainbow Towers Conference Centre",
+      isOnlineOnly: false,
+      targetAudience: "public",
+      category: TournamentCategory.PUBLIC,
+      difficultyLevel: "advanced",
+      registrationStart: new Date(
+        currentDate.getTime() - 2 * 24 * 60 * 60 * 1000
+      ),
+      registrationEnd: oneWeekFromNow,
+      startDate: new Date(oneWeekFromNow.getTime() + 24 * 60 * 60 * 1000),
+      endDate: new Date(oneWeekFromNow.getTime() + 3 * 24 * 60 * 60 * 1000),
+    },
+    {
+      title: "UZ Student Chess League",
+      description:
+        "Monthly chess tournament for University of Zimbabwe students",
+      gameId: createdGames[0].id,
+      entryFee: 1.0,
+      prizePool: 100.0,
+      maxPlayers: 32,
+      status: TournamentStatus.OPEN,
+      province: "Harare",
+      city: "Harare",
+      location: "University of Zimbabwe",
+      venue: "UZ Main Hall",
       isOnlineOnly: false,
       targetAudience: "university",
       category: TournamentCategory.UNIVERSITY,
       difficultyLevel: "intermediate",
-      localCurrency: "USD",
-      registrationStart: new Date("2024-02-01T09:00:00Z"),
-      registrationEnd: new Date("2024-02-15T23:59:59Z"),
-      startDate: new Date("2024-02-20T10:00:00Z"),
-      endDate: new Date("2024-02-22T18:00:00Z"),
-      prizeBreakdown: {
-        first: 120,
-        second: 50,
-        third: 30,
-      },
+      registrationStart: new Date(
+        currentDate.getTime() - 1 * 24 * 60 * 60 * 1000
+      ),
+      registrationEnd: new Date(
+        currentDate.getTime() + 5 * 24 * 60 * 60 * 1000
+      ),
+      startDate: new Date(currentDate.getTime() + 6 * 24 * 60 * 60 * 1000),
+      endDate: new Date(currentDate.getTime() + 7 * 24 * 60 * 60 * 1000),
     },
+    // Tournament starting soon (for testing)
     {
-      title: "Bulawayo Draughts Open",
-      description: "Open draughts tournament for all skill levels",
-      gameId: createdGames[1].id, // Draughts
-      entryFee: 1.0,
-      prizePool: 150.0,
-      maxPlayers: 24,
-      province: "Bulawayo",
-      city: "Bulawayo",
-      location: "Bulawayo City Centre",
+      title: "Friday Night Checkers Blitz",
+      description: "Fast-paced checkers tournament every Friday",
+      gameId: createdGames[1].id,
+      entryFee: 0.5,
+      prizePool: 50.0,
+      maxPlayers: 16,
+      status: TournamentStatus.OPEN,
+      province: "Harare",
+      city: "Harare",
+      location: "Online",
       isOnlineOnly: true,
       targetAudience: "public",
       category: TournamentCategory.PUBLIC,
       difficultyLevel: "beginner",
-      localCurrency: "USD",
-      registrationStart: new Date("2024-02-05T09:00:00Z"),
-      registrationEnd: new Date("2024-02-18T23:59:59Z"),
-      startDate: new Date("2024-02-25T14:00:00Z"),
-      endDate: new Date("2024-02-25T18:00:00Z"),
-      prizeBreakdown: {
-        first: 90,
-        second: 40,
-        third: 20,
-      },
+      registrationStart: new Date(
+        currentDate.getTime() - 3 * 24 * 60 * 60 * 1000
+      ),
+      registrationEnd: new Date(currentDate.getTime() + 2 * 60 * 60 * 1000), // 2 hours from now
+      startDate: new Date(currentDate.getTime() + 3 * 60 * 60 * 1000), // 3 hours from now
+      endDate: new Date(currentDate.getTime() + 6 * 60 * 60 * 1000), // 6 hours from now
+    },
+    // In-progress tournament
+    {
+      title: "Midlands Connect 4 Championship",
+      description: "Regional Connect 4 tournament for Midlands province",
+      gameId: createdGames[3].id,
+      entryFee: 2.0,
+      prizePool: 200.0,
+      maxPlayers: 24,
+      status: TournamentStatus.ACTIVE,
+      province: "Midlands",
+      city: "Gweru",
+      location: "Gweru Polytechnic",
+      venue: "Gweru Polytechnic Sports Hall",
+      isOnlineOnly: false,
+      targetAudience: "public",
+      category: TournamentCategory.PUBLIC,
+      difficultyLevel: "intermediate",
+      registrationStart: new Date(
+        currentDate.getTime() - 10 * 24 * 60 * 60 * 1000
+      ),
+      registrationEnd: new Date(
+        currentDate.getTime() - 3 * 24 * 60 * 60 * 1000
+      ),
+      startDate: new Date(currentDate.getTime() - 2 * 24 * 60 * 60 * 1000),
+      endDate: new Date(currentDate.getTime() + 1 * 24 * 60 * 60 * 1000),
+    },
+    // Completed tournament
+    {
+      title: "New Year Chess Classic 2025",
+      description: "Special New Year chess tournament with great prizes",
+      gameId: createdGames[0].id,
+      entryFee: 3.0,
+      prizePool: 300.0,
+      maxPlayers: 32,
+      status: TournamentStatus.COMPLETED,
+      province: "Bulawayo",
+      city: "Bulawayo",
+      location: "Bulawayo Athletic Club",
+      venue: "Bulawayo Athletic Club",
+      isOnlineOnly: false,
+      targetAudience: "public",
+      category: TournamentCategory.PUBLIC,
+      difficultyLevel: "intermediate",
+      registrationStart: new Date("2024-12-15"),
+      registrationEnd: new Date("2024-12-28"),
+      startDate: new Date("2025-01-01"),
+      endDate: new Date("2025-01-03"),
     },
   ];
 
-  const createdTournaments = await Promise.all(
-    tournaments.map((tournament) =>
-      prisma.tournament.create({ data: tournament })
-    )
-  );
+  // Add more tournaments with various games and statuses
+  for (let i = 0; i < 15; i++) {
+    const game = createdGames[Math.floor(Math.random() * createdGames.length)];
+    const province = provinces[Math.floor(Math.random() * provinces.length)];
+    const isOnline = Math.random() < 0.4; // 40% online
+    const status =
+      Math.random() < 0.6
+        ? TournamentStatus.OPEN
+        : Math.random() < 0.3
+        ? TournamentStatus.ACTIVE
+        : TournamentStatus.COMPLETED;
 
-  // 6b. Seed sample chat messages for first tournament
-  console.log("💬 Creating tournament chat messages...");
-  if (createdTournaments.length > 0) {
-    // @ts-ignore – generated after Prisma schema update
-    await prisma.tournamentChatMessage.createMany({
-      data: [
-        {
-          tournamentId: createdTournaments[0].id,
-          userId: createdUsers[0].id,
-          text: "Good luck everyone!",
-          createdAt: new Date(Date.now() - 60 * 60 * 1000),
-        },
-        {
-          tournamentId: createdTournaments[0].id,
-          userId: createdUsers[1].id,
-          text: "May the best player win.",
-          createdAt: new Date(Date.now() - 55 * 60 * 1000),
-        },
+    // Adjust dates based on status
+    let regStart, regEnd, startDate, endDate;
+    if (status === TournamentStatus.OPEN) {
+      regStart = randomDate(
+        new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000),
+        currentDate
+      );
+      regEnd = randomDate(currentDate, oneWeekFromNow);
+      startDate = new Date(regEnd.getTime() + 24 * 60 * 60 * 1000);
+      endDate = new Date(startDate.getTime() + 2 * 24 * 60 * 60 * 1000);
+    } else if (status === TournamentStatus.ACTIVE) {
+      regStart = new Date(currentDate.getTime() - 10 * 24 * 60 * 60 * 1000);
+      regEnd = new Date(currentDate.getTime() - 3 * 24 * 60 * 60 * 1000);
+      startDate = new Date(currentDate.getTime() - 1 * 24 * 60 * 60 * 1000);
+      endDate = randomDate(currentDate, oneWeekFromNow);
+    } else {
+      regStart = new Date(currentDate.getTime() - 20 * 24 * 60 * 60 * 1000);
+      regEnd = new Date(currentDate.getTime() - 10 * 24 * 60 * 60 * 1000);
+      startDate = new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+      endDate = new Date(currentDate.getTime() - 3 * 24 * 60 * 60 * 1000);
+    }
+
+    tournamentTemplates.push({
+      title: `${game.name} ${province} Tournament #${i + 1}`,
+      description: `${game.name} tournament for ${province} province players`,
+      gameId: game.id,
+      entryFee: Math.random() * 3 + 0.5,
+      prizePool: Math.random() * 200 + 50,
+      maxPlayers: [8, 16, 24, 32][Math.floor(Math.random() * 4)],
+      status,
+      province,
+      city:
+        province === "Harare"
+          ? "Harare"
+          : province === "Bulawayo"
+          ? "Bulawayo"
+          : "Main City",
+      location: isOnline ? "Online" : `${province} Gaming Center`,
+      venue: isOnline ? undefined : `${province} Gaming Center`,
+      isOnlineOnly: isOnline,
+      targetAudience: Math.random() < 0.3 ? "university" : "public",
+      category:
+        Math.random() < 0.3
+          ? TournamentCategory.UNIVERSITY
+          : TournamentCategory.PUBLIC,
+      difficultyLevel: ["beginner", "intermediate", "advanced"][
+        Math.floor(Math.random() * 3)
       ],
+      registrationStart: regStart,
+      registrationEnd: regEnd,
+      startDate,
+      endDate,
     });
   }
 
-  // 7. Create achievements
+  const createdTournaments = await Promise.all(
+    tournamentTemplates.map((tournament) =>
+      prisma.tournament.create({
+        data: {
+          ...tournament,
+          prizeBreakdown: {
+            first: Math.floor(tournament.prizePool * 0.6),
+            second: Math.floor(tournament.prizePool * 0.25),
+            third: Math.floor(tournament.prizePool * 0.15),
+          },
+        },
+      })
+    )
+  );
+
+  // 7. Create tournament players (registrations)
+  console.log("👥 Creating tournament players...");
+  const tournamentPlayers: any[] = [];
+
+  for (const tournament of createdTournaments) {
+    const maxRegistrations = Math.min(
+      tournament.maxPlayers,
+      tournament.status === TournamentStatus.COMPLETED
+        ? tournament.maxPlayers
+        : Math.floor(tournament.maxPlayers * (0.4 + Math.random() * 0.6))
+    );
+
+    // Randomly select users for this tournament
+    const selectedUsers = createdUsers
+      .slice(1) // Skip admin
+      .sort(() => Math.random() - 0.5)
+      .slice(0, maxRegistrations);
+
+    selectedUsers.forEach((user, index) => {
+      tournamentPlayers.push({
+        userId: user.id,
+        tournamentId: tournament.id,
+        registeredAt: randomDate(
+          tournament.registrationStart,
+          tournament.registrationEnd
+        ),
+        joinedAt: randomDate(
+          tournament.registrationStart,
+          tournament.registrationEnd
+        ),
+        isActive:
+          tournament.status !== TournamentStatus.COMPLETED
+            ? true
+            : index < maxRegistrations,
+        seedNumber: index + 1,
+        currentRound:
+          tournament.status === TournamentStatus.COMPLETED
+            ? Math.floor(Math.log2(maxRegistrations)) + 1
+            : 1,
+        isEliminated:
+          tournament.status === TournamentStatus.COMPLETED ? index >= 3 : false,
+        placement:
+          tournament.status === TournamentStatus.COMPLETED
+            ? index === 0
+              ? 1
+              : index === 1
+              ? 2
+              : index === 2
+              ? 3
+              : null
+            : null,
+        prizeWon:
+          tournament.status === TournamentStatus.COMPLETED
+            ? index === 0
+              ? tournament.prizePool * 0.6
+              : index === 1
+              ? tournament.prizePool * 0.25
+              : index === 2
+              ? tournament.prizePool * 0.15
+              : 0
+            : 0,
+      });
+    });
+  }
+
+  await prisma.tournamentPlayer.createMany({ data: tournamentPlayers });
+
+  // 8. Create payments for tournament entries
+  console.log("💳 Creating tournament payments...");
+  const payments: any[] = [];
+
+  for (const tp of tournamentPlayers) {
+    const tournament = createdTournaments.find((t) => t.id === tp.tournamentId);
+    if (tournament && tournament.entryFee > 0) {
+      payments.push({
+        userId: tp.userId,
+        tournamentId: tp.tournamentId,
+        amount: tournament.entryFee,
+        currency: "USD",
+        type: PaymentType.ENTRY_FEE,
+        status: PaymentStatus.COMPLETED,
+        paymentMethodCode: Math.random() < 0.7 ? "ECOCASH" : "ONEMONEY",
+        mobileMoneyNumber: generateZimbabwePhone(),
+        paymentConfirmedAt: tp.registeredAt,
+        createdAt: tp.registeredAt,
+      });
+    }
+  }
+
+  await prisma.payment.createMany({ data: payments });
+
+  // 9. Create matches for in-progress and completed tournaments
+  console.log("⚔️ Creating tournament matches...");
+  const matches: any[] = [];
+
+  for (const tournament of createdTournaments) {
+    if (
+      tournament.status === TournamentStatus.ACTIVE ||
+      tournament.status === TournamentStatus.COMPLETED
+    ) {
+      const tournamentPlayers = await prisma.tournamentPlayer.findMany({
+        where: { tournamentId: tournament.id },
+        include: { user: true },
+      });
+
+      // Create some matches
+      for (let i = 0; i < tournamentPlayers.length - 1; i += 2) {
+        if (i + 1 < tournamentPlayers.length) {
+          const player1 = tournamentPlayers[i];
+          const player2 = tournamentPlayers[i + 1];
+
+          matches.push({
+            player1Id: player1.userId,
+            player2Id: player2.userId,
+            gameId: tournament.gameId,
+            tournamentId: tournament.id,
+            round: 1,
+            status:
+              tournament.status === TournamentStatus.COMPLETED
+                ? MatchStatus.COMPLETED
+                : Math.random() < 0.5
+                ? MatchStatus.ACTIVE
+                : MatchStatus.COMPLETED,
+            result:
+              tournament.status === TournamentStatus.COMPLETED
+                ? Math.random() < 0.5
+                  ? MatchResult.PLAYER1_WIN
+                  : MatchResult.PLAYER2_WIN
+                : Math.random() < 0.3
+                ? MatchResult.PLAYER1_WIN
+                : Math.random() < 0.6
+                ? MatchResult.PLAYER2_WIN
+                : MatchResult.PENDING,
+            winnerId: null, // Will be set based on result
+            duration: Math.floor(Math.random() * 1800) + 300, // 5-35 minutes
+            createdAt: randomDate(
+              tournament.startDate,
+              tournament.endDate || new Date()
+            ),
+            startedAt: randomDate(
+              tournament.startDate,
+              tournament.endDate || new Date()
+            ),
+            finishedAt:
+              tournament.status === TournamentStatus.COMPLETED
+                ? randomDate(
+                    tournament.startDate,
+                    tournament.endDate || new Date()
+                  )
+                : null,
+          });
+        }
+      }
+    }
+  }
+
+  const createdMatches = await Promise.all(
+    matches.map((match) => {
+      // Set winnerId based on result
+      if (match.result === MatchResult.PLAYER1_WIN) {
+        match.winnerId = match.player1Id;
+      } else if (match.result === MatchResult.PLAYER2_WIN) {
+        match.winnerId = match.player2Id;
+      }
+      return prisma.match.create({ data: match });
+    })
+  );
+
+  // 10. Create game statistics
+  console.log("📊 Creating game statistics...");
+  const gameStats: any[] = [];
+
+  for (const user of createdUsers.slice(1)) {
+    // Skip admin
+    for (const game of createdGames) {
+      const gamesPlayed = Math.floor(Math.random() * 50) + 10;
+      const gamesWon = Math.floor(gamesPlayed * (0.2 + Math.random() * 0.6));
+      const gamesLost = gamesPlayed - gamesWon;
+
+      gameStats.push({
+        userId: user.id,
+        gameId: game.id,
+        gamesPlayed,
+        gamesWon,
+        gamesLost,
+        gamesDrawn: Math.floor(Math.random() * 5),
+        winRate: gamesWon / gamesPlayed,
+        averageScore: Math.floor(Math.random() * 100) + 50,
+        bestScore: Math.floor(Math.random() * 200) + 100,
+        totalPlayTime: gamesPlayed * Math.floor(game.averageTimeMs / 1000),
+        currentRating: Math.floor(Math.random() * 800) + 1000,
+        peakRating: Math.floor(Math.random() * 1000) + 1200,
+      });
+    }
+  }
+
+  await prisma.gameStatistic.createMany({ data: gameStats });
+
+  // 11. Create achievements
   console.log("🏅 Creating achievements...");
   const achievements = [
+    {
+      name: "First Steps",
+      description: "Complete your first game",
+      icon: "🎯",
+      type: AchievementType.SPECIAL,
+      requirements: { gamesPlayed: 1 },
+      points: 25,
+    },
     {
       name: "First Victory",
       description: "Win your first game",
       icon: "🎉",
-      type: AchievementType.GAMES_WON,
+      type: AchievementType.SPECIAL,
       requirements: { gamesWon: 1 },
       points: 50,
     },
     {
       name: "Chess Master",
-      description: "Win 10 chess games",
+      description: "Win 25 chess games",
       icon: "♟️",
-      type: AchievementType.GAMES_WON,
-      requirements: { gamesWon: 10, gameType: "Chess" },
+      type: AchievementType.SPECIAL,
+      requirements: { gamesWon: 25, gameType: "Chess" },
       points: 200,
+    },
+    {
+      name: "Checkers Champion",
+      description: "Win 20 checkers games",
+      icon: "🔴",
+      type: AchievementType.SPECIAL,
+      requirements: { gamesWon: 20, gameType: "Checkers" },
+      points: 180,
+    },
+    {
+      name: "Quick Draw",
+      description: "Win 15 Tic Tac Toe games",
+      icon: "⚡",
+      type: AchievementType.SPECIAL,
+      requirements: { gamesWon: 15, gameType: "Tic Tac Toe" },
+      points: 100,
+    },
+    {
+      name: "Connect Master",
+      description: "Win 18 Connect 4 games",
+      icon: "🔵",
+      type: AchievementType.SPECIAL,
+      requirements: { gamesWon: 18, gameType: "Connect 4" },
+      points: 150,
+    },
+    {
+      name: "Tournament Warrior",
+      description: "Participate in 5 tournaments",
+      icon: "⚔️",
+      type: AchievementType.PARTICIPATION,
+      requirements: { tournamentsJoined: 5 },
+      points: 300,
     },
     {
       name: "Tournament Champion",
@@ -882,82 +953,150 @@ async function main() {
       points: 500,
     },
     {
+      name: "Tournament Legend",
+      description: "Win 3 tournaments",
+      icon: "👑",
+      type: AchievementType.TOURNAMENTS_WON,
+      requirements: { tournamentsWon: 3 },
+      points: 1000,
+    },
+    {
       name: "Zimbabwe Pride",
-      description: "Represent Zimbabwe in 5 tournaments",
+      description: "Represent Zimbabwe in 10 tournaments",
       icon: "🇿🇼",
       type: AchievementType.PARTICIPATION,
-      requirements: { tournamentsJoined: 5 },
-      points: 300,
+      requirements: { tournamentsJoined: 10 },
+      points: 400,
     },
     {
       name: "Rising Star",
-      description: "Reach 1500 rating",
+      description: "Reach 1400 rating",
       icon: "⭐",
       type: AchievementType.RATING_MILESTONE,
-      requirements: { rating: 1500 },
+      requirements: { rating: 1400 },
+      points: 350,
+    },
+    {
+      name: "Expert Player",
+      description: "Reach 1600 rating",
+      icon: "🌟",
+      type: AchievementType.RATING_MILESTONE,
+      requirements: { rating: 1600 },
+      points: 500,
+    },
+    {
+      name: "Master Player",
+      description: "Reach 1800 rating",
+      icon: "💫",
+      type: AchievementType.RATING_MILESTONE,
+      requirements: { rating: 1800 },
+      points: 750,
+    },
+    {
+      name: "Win Streak",
+      description: "Win 5 games in a row",
+      icon: "🔥",
+      type: AchievementType.WIN_STREAK,
+      requirements: { winStreak: 5 },
+      points: 200,
+    },
+    {
+      name: "Dedication",
+      description: "Play 100 games",
+      icon: "💪",
+      type: AchievementType.SPECIAL,
+      requirements: { gamesPlayed: 100 },
       points: 400,
     },
   ];
 
-  await prisma.achievement.createMany({
-    data: achievements,
-  });
+  await prisma.achievement.createMany({ data: achievements });
 
-  // 8. Create game statistics for users
-  console.log("📊 Creating game statistics...");
-  const gameStats: Array<{
-    userId: string;
-    gameId: string;
-    gamesPlayed: number;
-    gamesWon: number;
-    gamesLost: number;
-    gamesDrawn: number;
-    winRate: number;
-    averageScore: number;
-    bestScore: number;
-    totalPlayTime: number;
-    currentRating: number;
-    peakRating: number;
-  }> = [];
+  // 12. Create tournament chat messages
+  console.log("💬 Creating tournament chat messages...");
+  const chatMessages: any[] = [];
 
-  for (const user of createdUsers.slice(0, 3)) {
-    // Skip admin user
-    for (const game of createdGames) {
-      const gamesPlayed = Math.floor(Math.random() * 20) + 5;
-      const gamesWon = Math.floor(gamesPlayed * (0.3 + Math.random() * 0.4));
-      const gamesLost = gamesPlayed - gamesWon;
+  for (const tournament of createdTournaments.slice(0, 10)) {
+    // Add chat to first 10 tournaments
+    const tournamentPlayers = await prisma.tournamentPlayer.findMany({
+      where: { tournamentId: tournament.id },
+      take: 5, // Get first 5 players
+    });
 
-      gameStats.push({
-        userId: user.id,
-        gameId: game.id,
-        gamesPlayed,
-        gamesWon,
-        gamesLost,
-        gamesDrawn: 0,
-        winRate: gamesWon / gamesPlayed,
-        averageScore: Math.floor(Math.random() * 100) + 50,
-        bestScore: Math.floor(Math.random() * 200) + 100,
-        totalPlayTime: gamesPlayed * (game.averageTimeMs / 1000),
-        currentRating: Math.floor(Math.random() * 400) + 1000,
-        peakRating: Math.floor(Math.random() * 600) + 1200,
+    const sampleMessages = [
+      "Good luck everyone! 🎮",
+      "May the best player win! 💪",
+      "Let's have a great tournament! 🏆",
+      "Looking forward to some exciting matches! ⚡",
+      "Best of luck to all participants! 🌟",
+      "This should be an amazing tournament! 🎯",
+      "Ready to give it my all! 🔥",
+      "Great to see so many skilled players here! 👥",
+      "Let's play fair and have fun! 🎲",
+      "Tournament time! Let's do this! 🚀",
+    ];
+
+    for (let i = 0; i < Math.min(5, tournamentPlayers.length); i++) {
+      const player = tournamentPlayers[i];
+      const messageTime = randomDate(
+        tournament.registrationStart,
+        tournament.startDate
+      );
+
+      chatMessages.push({
+        tournamentId: tournament.id,
+        userId: player.userId,
+        text: sampleMessages[Math.floor(Math.random() * sampleMessages.length)],
+        createdAt: messageTime,
       });
     }
   }
 
-  await prisma.gameStatistic.createMany({
-    data: gameStats,
-  });
+  await prisma.tournamentChatMessage.createMany({ data: chatMessages });
 
-  console.log("✅ Zimbabwe gaming platform seeded successfully!");
+  // Update tournament current players count
+  console.log("📊 Updating tournament player counts...");
+  for (const tournament of createdTournaments) {
+    const playerCount = await prisma.tournamentPlayer.count({
+      where: { tournamentId: tournament.id },
+    });
+
+    await prisma.tournament.update({
+      where: { id: tournament.id },
+      data: { currentPlayers: playerCount },
+    });
+  }
+
+  console.log("✅ Comprehensive Zimbabwe gaming platform seeded successfully!");
   console.log(`📈 Created:`);
   console.log(`   - ${locations.length} Zimbabwe locations`);
   console.log(`   - ${institutions.length} institutions`);
   console.log(`   - ${mobileMoneyProviders.length} mobile money providers`);
-  console.log(`   - ${games.length} games`);
-  console.log(`   - ${users.length} users`);
-  console.log(`   - ${tournaments.length} tournaments`);
-  console.log(`   - ${achievements.length} achievements`);
+  console.log(`   - ${createdGames.length} games`);
+  console.log(`   - ${createdUsers.length} users`);
+  console.log(`   - ${createdTournaments.length} tournaments`);
+  console.log(`   - ${tournamentPlayers.length} tournament registrations`);
+  console.log(`   - ${payments.length} payments`);
+  console.log(`   - ${createdMatches.length} matches`);
   console.log(`   - ${gameStats.length} game statistics records`);
+  console.log(`   - ${achievements.length} achievements`);
+  console.log(`   - ${chatMessages.length} chat messages`);
+
+  console.log("\n🎯 Tournament Status Summary:");
+  const statusCounts = await prisma.tournament.groupBy({
+    by: ["status"],
+    _count: { status: true },
+  });
+
+  statusCounts.forEach(({ status, _count }) => {
+    console.log(`   - ${status}: ${_count.status} tournaments`);
+  });
+
+  console.log("\n🎮 Ready for comprehensive testing!");
+  console.log("   - Check tournaments starting soon for live testing");
+  console.log("   - Multiple tournaments with players for bracket testing");
+  console.log("   - Various tournament states for UI testing");
+  console.log("   - Comprehensive user data for social features");
 }
 
 main()

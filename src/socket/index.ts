@@ -1,8 +1,10 @@
 import { Server as SocketServer, Socket } from "socket.io";
 import jwt from "jsonwebtoken";
+import { Chess } from "chess.js";
 import { env } from "../config/environment";
 import logger, { logSecurity } from "../config/logger";
 import { prisma } from "../config/database";
+import { updatePlayerStatistics } from "../routes/matches";
 
 interface SocketUser {
   id: string;
@@ -15,6 +17,39 @@ interface AuthenticatedSocket extends Socket {
   gameRoom?: string;
   matchId?: string;
 }
+
+// Helper function to validate chess moves
+const validateChessMove = (
+  currentFen: string | null,
+  move: any
+): { isValid: boolean; newFen?: string; error?: string } => {
+  try {
+    // Use provided FEN or start position
+    const game = new Chess(currentFen || undefined);
+
+    // Validate the move
+    const chessmove = game.move(move);
+
+    if (chessmove) {
+      return {
+        isValid: true,
+        newFen: game.fen(),
+      };
+    } else {
+      return {
+        isValid: false,
+        error: `Invalid move: ${JSON.stringify(move)}`,
+      };
+    }
+  } catch (error) {
+    return {
+      isValid: false,
+      error: `Move validation error: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`,
+    };
+  }
+};
 
 // Socket authentication middleware
 const authenticateSocket = async (socket: any, next: any) => {
@@ -136,7 +171,55 @@ export const initializeSocket = (io: SocketServer) => {
           username: socket.user.username,
         });
 
-        socket.emit("joined-game-room", { matchId, gameRoom });
+        // Get match details with player info
+        const matchWithPlayers = await prisma.match.findUnique({
+          where: { id: matchId },
+          include: {
+            player1: { select: { id: true, username: true, avatar: true } },
+            player2: { select: { id: true, username: true, avatar: true } },
+            game: { select: { name: true } },
+          },
+        });
+
+        // Send game state along with room confirmation
+        const currentGameData = (matchWithPlayers as any)?.gameData;
+
+        // Determine current turn based on game data
+        let currentTurn = "white"; // Default to white starts
+        if (currentGameData?.lastMoveBy) {
+          // If there was a last move, alternate the turn
+          if (currentGameData.lastMoveBy === matchWithPlayers?.player1Id) {
+            currentTurn = "black"; // Player 1 moved, now player 2's turn
+          } else {
+            currentTurn = "white"; // Player 2 moved, now player 1's turn
+          }
+        }
+
+        const gameState = {
+          matchId,
+          gameType: matchWithPlayers?.game.name.toLowerCase() || "chess",
+          status: matchWithPlayers?.status.toLowerCase(),
+          currentTurn,
+          players: {
+            white: matchWithPlayers?.player1 || {
+              id: "",
+              username: "",
+              rating: 0,
+              isOnline: true,
+            },
+            black: matchWithPlayers?.player2 || {
+              id: "",
+              username: "",
+              rating: 0,
+              isOnline: true,
+            },
+          },
+          gameData: currentGameData || null,
+          timeRemaining: { white: 600, black: 600 }, // TODO: Get from match
+          moveHistory: [],
+        };
+
+        socket.emit("joined-game-room", { matchId, gameRoom, gameState });
       } catch (error) {
         logger.error("Error joining game room", {
           error,
@@ -151,7 +234,7 @@ export const initializeSocket = (io: SocketServer) => {
       "make-move",
       async (data: { matchId: string; move: any; gameState: any }) => {
         try {
-          const { matchId, move, gameState } = data;
+          const { matchId, move } = data;
 
           if (!socket.user || socket.matchId !== matchId) {
             socket.emit("error", {
@@ -177,6 +260,27 @@ export const initializeSocket = (io: SocketServer) => {
             return;
           }
 
+          // Basic turn validation (improve this based on your game rules)
+          const currentGameData = match.gameData as any;
+          const lastMoveBy = currentGameData?.lastMoveBy;
+
+          // If there's a last move, the current player should be different
+          if (lastMoveBy && lastMoveBy === socket.user.id) {
+            socket.emit("error", { message: "Not your turn" });
+            return;
+          }
+
+          // Validate the chess move
+          const currentFen = currentGameData?.fen || null;
+          const validation = validateChessMove(currentFen, move);
+
+          if (!validation.isValid) {
+            socket.emit("error", {
+              message: validation.error || "Invalid move",
+            });
+            return;
+          }
+
           // Update match with new move
           const updatedMatch = await prisma.match.update({
             where: { id: matchId },
@@ -184,9 +288,9 @@ export const initializeSocket = (io: SocketServer) => {
               gameData: {
                 ...(match.gameData as any),
                 lastMove: move,
-                gameState,
                 lastMoveBy: socket.user.id,
                 lastMoveAt: new Date().toISOString(),
+                fen: validation.newFen, // Store the new FEN position
               },
             },
           });
@@ -196,7 +300,7 @@ export const initializeSocket = (io: SocketServer) => {
             socket.to(socket.gameRoom).emit("move-made", {
               matchId,
               move,
-              gameState,
+              gameState: updatedMatch.gameData,
               playerId: socket.user.id,
               timestamp: new Date().toISOString(),
             });
@@ -208,7 +312,12 @@ export const initializeSocket = (io: SocketServer) => {
             move: JSON.stringify(move),
           });
 
-          socket.emit("move-confirmed", { matchId, move });
+          // Confirm move to the player who made it with updated game state
+          socket.emit("move-confirmed", {
+            matchId,
+            move,
+            gameState: updatedMatch.gameData,
+          });
         } catch (error) {
           logger.error("Error making move", { error, userId: socket.user?.id });
           socket.emit("error", { message: "Failed to make move" });
@@ -230,38 +339,70 @@ export const initializeSocket = (io: SocketServer) => {
             return;
           }
 
+          // Get match details first to determine winner
+          const currentMatch = await prisma.match.findUnique({
+            where: { id: matchId },
+            select: { player1Id: true, player2Id: true },
+          });
+
+          if (!currentMatch) {
+            socket.emit("error", { message: "Match not found" });
+            return;
+          }
+
+          // Map result to correct enum values and determine winner
+          let matchResult: string;
+          let winnerId: string | null = null;
+
+          switch (result) {
+            case "resignation":
+            case "forfeit":
+              matchResult = "FORFEIT";
+              // The user who resigned loses, opponent wins
+              winnerId =
+                currentMatch.player1Id === socket.user.id
+                  ? currentMatch.player2Id
+                  : currentMatch.player1Id;
+              break;
+            case "draw":
+              matchResult = "DRAW";
+              winnerId = null;
+              break;
+            case "checkmate":
+            case "win":
+              // The user who calls this wins
+              matchResult =
+                currentMatch.player1Id === socket.user.id
+                  ? "PLAYER1_WIN"
+                  : "PLAYER2_WIN";
+              winnerId = socket.user.id;
+              break;
+            case "timeout":
+              // The user who timed out loses
+              matchResult = "FORFEIT";
+              winnerId =
+                currentMatch.player1Id === socket.user.id
+                  ? currentMatch.player2Id
+                  : currentMatch.player1Id;
+              break;
+            default:
+              matchResult = "FORFEIT";
+              winnerId =
+                currentMatch.player1Id === socket.user.id
+                  ? currentMatch.player2Id
+                  : currentMatch.player1Id;
+          }
+
           // Update match status
           const match = await prisma.match.update({
             where: { id: matchId },
             data: {
               status: "COMPLETED",
-              result: result as any,
+              result: matchResult as any,
               gameData,
               finishedAt: new Date(),
               duration: gameData?.duration || null,
-              winnerId:
-                result === "WIN"
-                  ? socket.user.id
-                  : result === "LOSS"
-                  ? (
-                      await prisma.match.findUnique({
-                        where: { id: matchId },
-                        select: { player1Id: true, player2Id: true },
-                      })
-                    )?.player1Id === socket.user.id
-                    ? (
-                        await prisma.match.findUnique({
-                          where: { id: matchId },
-                          select: { player2Id: true },
-                        })
-                      )?.player2Id
-                    : (
-                        await prisma.match.findUnique({
-                          where: { id: matchId },
-                          select: { player1Id: true },
-                        })
-                      )?.player1Id
-                  : null,
+              winnerId,
             },
             include: {
               player1: { select: { id: true, username: true } },
@@ -270,12 +411,21 @@ export const initializeSocket = (io: SocketServer) => {
             },
           });
 
+          // Update player statistics and get rating changes
+          const ratingChanges = await updatePlayerStatistics(
+            match,
+            matchResult,
+            winnerId
+          );
+
           // Broadcast game completion to all players
           if (socket.gameRoom) {
             io.to(socket.gameRoom).emit("game-completed", {
               matchId,
-              result,
+              result: matchResult,
+              reason: result, // Send original reason for UI display
               winner: match.winnerId,
+              actionBy: socket.user.id, // WHO triggered this action (resigned, etc.)
               match: {
                 id: match.id,
                 player1: match.player1,
@@ -284,12 +434,27 @@ export const initializeSocket = (io: SocketServer) => {
                 duration: match.duration,
                 finishedAt: match.finishedAt,
               },
+              ratingChanges: ratingChanges
+                ? {
+                    player1: {
+                      id: match.player1Id,
+                      change: ratingChanges.player1RatingChange,
+                      newRating: ratingChanges.player1NewRating,
+                    },
+                    player2: {
+                      id: match.player2Id,
+                      change: ratingChanges.player2RatingChange,
+                      newRating: ratingChanges.player2NewRating,
+                    },
+                  }
+                : null,
             });
           }
 
           logger.info("Game completed", {
             matchId,
-            result,
+            result: matchResult,
+            originalReason: result,
             winnerId: match.winnerId,
             player1Id: match.player1Id,
             player2Id: match.player2Id,
@@ -303,6 +468,40 @@ export const initializeSocket = (io: SocketServer) => {
         }
       }
     );
+
+    // Handle draw offers
+    socket.on("offer-draw", async (data: { matchId: string }) => {
+      try {
+        const { matchId } = data;
+
+        if (!socket.user || socket.matchId !== matchId) {
+          socket.emit("error", {
+            message: "Invalid match or not joined to match",
+          });
+          return;
+        }
+
+        // Broadcast draw offer to opponent
+        if (socket.gameRoom) {
+          socket.to(socket.gameRoom).emit("draw-offered", {
+            matchId,
+            offeredBy: socket.user.id,
+            username: socket.user.username,
+          });
+        }
+
+        logger.info("Draw offered", {
+          userId: socket.user.id,
+          matchId,
+        });
+      } catch (error) {
+        logger.error("Error offering draw", {
+          error,
+          userId: socket.user?.id,
+        });
+        socket.emit("error", { message: "Failed to offer draw" });
+      }
+    });
 
     // Handle chat messages
     socket.on("send-message", (data: { matchId: string; message: string }) => {

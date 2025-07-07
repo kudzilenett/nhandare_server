@@ -9,6 +9,7 @@ import {
 import { asyncHandler } from "../middleware/errorHandler";
 import Joi from "joi";
 import logger from "../config/logger";
+import { calculateEloRatings, matchResultToGameScores } from "../utils/elo";
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -769,8 +770,9 @@ router.get(
 
 /**
  * Helper function to update player statistics when a match is completed
+ * Now includes proper ELO rating calculations
  */
-async function updatePlayerStatistics(
+export async function updatePlayerStatistics(
   match: any,
   result: string,
   winnerId?: string
@@ -778,7 +780,7 @@ async function updatePlayerStatistics(
   try {
     const updates = [];
 
-    // Get current player statistics
+    // Get current player statistics (including ratings)
     const [player1Stats, player2Stats] = await Promise.all([
       prisma.user.findUnique({
         where: { id: match.player1Id },
@@ -789,6 +791,42 @@ async function updatePlayerStatistics(
         select: { gamesPlayed: true, gamesWon: true },
       }),
     ]);
+
+    // Get current game statistics (including current ratings)
+    const [player1GameStats, player2GameStats] = await Promise.all([
+      prisma.gameStatistic.findUnique({
+        where: {
+          userId_gameId: {
+            userId: match.player1Id,
+            gameId: match.gameId,
+          },
+        },
+      }),
+      prisma.gameStatistic.findUnique({
+        where: {
+          userId_gameId: {
+            userId: match.player2Id,
+            gameId: match.gameId,
+          },
+        },
+      }),
+    ]);
+
+    // Get current ratings (default to 1200 for new players)
+    const player1CurrentRating = player1GameStats?.currentRating || 1200;
+    const player2CurrentRating = player2GameStats?.currentRating || 1200;
+    const player1GamesPlayed = player1GameStats?.gamesPlayed || 0;
+    const player2GamesPlayed = player2GameStats?.gamesPlayed || 0;
+
+    // Calculate ELO ratings
+    const gameScores = matchResultToGameScores(result);
+    const eloResult = calculateEloRatings(
+      player1CurrentRating,
+      player2CurrentRating,
+      player1GamesPlayed,
+      player2GamesPlayed,
+      gameScores
+    );
 
     // Calculate new win rates
     const player1NewGamesPlayed = (player1Stats?.gamesPlayed || 0) + 1;
@@ -833,26 +871,6 @@ async function updatePlayerStatistics(
       })
     );
 
-    // Get current game statistics
-    const [player1GameStats, player2GameStats] = await Promise.all([
-      prisma.gameStatistic.findUnique({
-        where: {
-          userId_gameId: {
-            userId: match.player1Id,
-            gameId: match.gameId,
-          },
-        },
-      }),
-      prisma.gameStatistic.findUnique({
-        where: {
-          userId_gameId: {
-            userId: match.player2Id,
-            gameId: match.gameId,
-          },
-        },
-      }),
-    ]);
-
     // Calculate new game win rates
     const player1NewGameGamesPlayed = (player1GameStats?.gamesPlayed || 0) + 1;
     const player1NewGameGamesWon =
@@ -874,7 +892,17 @@ async function updatePlayerStatistics(
           ) / 100
         : 0;
 
-    // Update game statistics for both players
+    // Update peak ratings
+    const player1NewPeakRating = Math.max(
+      player1GameStats?.peakRating || 1200,
+      eloResult.player1NewRating
+    );
+    const player2NewPeakRating = Math.max(
+      player2GameStats?.peakRating || 1200,
+      eloResult.player2NewRating
+    );
+
+    // Update game statistics for both players with ELO ratings
     updates.push(
       prisma.gameStatistic.upsert({
         where: {
@@ -890,6 +918,8 @@ async function updatePlayerStatistics(
           gamesDrawn: { increment: result === "DRAW" ? 1 : 0 },
           totalPlayTime: { increment: match.duration || 0 },
           winRate: player1NewGameWinRate,
+          currentRating: eloResult.player1NewRating,
+          peakRating: player1NewPeakRating,
         },
         create: {
           userId: match.player1Id,
@@ -900,6 +930,8 @@ async function updatePlayerStatistics(
           gamesDrawn: result === "DRAW" ? 1 : 0,
           totalPlayTime: match.duration || 0,
           winRate: result === "PLAYER1_WIN" ? 100 : 0,
+          currentRating: eloResult.player1NewRating,
+          peakRating: eloResult.player1NewRating,
         },
       })
     );
@@ -919,6 +951,8 @@ async function updatePlayerStatistics(
           gamesDrawn: { increment: result === "DRAW" ? 1 : 0 },
           totalPlayTime: { increment: match.duration || 0 },
           winRate: player2NewGameWinRate,
+          currentRating: eloResult.player2NewRating,
+          peakRating: player2NewPeakRating,
         },
         create: {
           userId: match.player2Id,
@@ -929,22 +963,45 @@ async function updatePlayerStatistics(
           gamesDrawn: result === "DRAW" ? 1 : 0,
           totalPlayTime: match.duration || 0,
           winRate: result === "PLAYER2_WIN" ? 100 : 0,
+          currentRating: eloResult.player2NewRating,
+          peakRating: eloResult.player2NewRating,
         },
       })
     );
 
     await Promise.all(updates);
 
-    logger.info("Player statistics updated", {
+    logger.info("Player statistics updated with ELO ratings", {
       matchId: match.id,
       result,
       winnerId,
+      eloChanges: {
+        player1: {
+          oldRating: player1CurrentRating,
+          newRating: eloResult.player1NewRating,
+          change: eloResult.player1Change,
+        },
+        player2: {
+          oldRating: player2CurrentRating,
+          newRating: eloResult.player2NewRating,
+          change: eloResult.player2Change,
+        },
+      },
     });
+
+    // Return the ELO changes for potential use by calling functions
+    return {
+      player1RatingChange: eloResult.player1Change,
+      player2RatingChange: eloResult.player2Change,
+      player1NewRating: eloResult.player1NewRating,
+      player2NewRating: eloResult.player2NewRating,
+    };
   } catch (error) {
     logger.error("Error updating player statistics", {
       error,
       matchId: match.id,
     });
+    throw error;
   }
 }
 

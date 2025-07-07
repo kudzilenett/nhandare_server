@@ -64,6 +64,8 @@ model User {
   achievements    UserAchievement[]
   payments        Payment[]
   chatMessages    TournamentChatMessage[]
+  challengesSent  ChallengeInvitation[]   @relation("Challenger")
+  challengesReceived ChallengeInvitation[] @relation("Challenged")
 
   @@map("users")
 }
@@ -90,6 +92,7 @@ model Game {
   matches     Match[]
   statistics  GameStatistic[]
   sessions    GameSession[]
+  challengeInvitations ChallengeInvitation[]
 
   @@map("games")
 }
@@ -203,6 +206,12 @@ model Match {
   result   MatchResult @default(PENDING)
   winnerId String?
 
+  // Relations to sessions
+  sessions GameSession[] @relation("Match_GameSession")
+
+  // Challenge invitation that created this match
+  challengeInvitation ChallengeInvitation?
+
   // Game data
   gameData Json? // Store game state, moves, etc.
   duration Int? // Match duration in seconds
@@ -213,6 +222,34 @@ model Match {
   finishedAt DateTime?
 
   @@map("matches")
+}
+
+model ChallengeInvitation {
+  id String @id @default(cuid())
+
+  // Challenge details
+  challengerId String
+  challenger   User   @relation("Challenger", fields: [challengerId], references: [id])
+  challengedId String
+  challenged   User   @relation("Challenged", fields: [challengedId], references: [id])
+
+  // Game info
+  gameId String
+  game   Game   @relation(fields: [gameId], references: [id])
+
+  // Invitation status
+  status ChallengeStatus @default(PENDING)
+
+  // Optional match created after acceptance
+  matchId String? @unique
+  match   Match?  @relation(fields: [matchId], references: [id])
+
+  // Timestamps
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  respondedAt DateTime?
+
+  @@map("challenge_invitations")
 }
 
 model GameSession {
@@ -242,6 +279,10 @@ model GameSession {
   createdAt  DateTime  @default(now())
   startedAt  DateTime?
   finishedAt DateTime?
+
+  // New matchId relation
+  matchId String?
+  match   Match?  @relation("Match_GameSession", fields: [matchId], references: [id])
 
   @@map("game_sessions")
 }
@@ -384,6 +425,13 @@ enum MatchResult {
   PLAYER2_WIN
   DRAW
   FORFEIT
+}
+
+enum ChallengeStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
 }
 
 enum SessionType {

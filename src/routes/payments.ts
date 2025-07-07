@@ -1,5 +1,5 @@
 import { Request, Response, Router } from "express";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, PaymentStatus } from "@prisma/client";
 import { authenticate } from "../middleware/auth";
 import {
   validateSchema,
@@ -10,6 +10,7 @@ import {
 import pesePayService from "../services/pesepay";
 import logger from "../config/logger";
 import { env, isDevelopment } from "../config/environment";
+import joi from "joi";
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -180,6 +181,27 @@ async function processPaymentStatusUpdate(
     logger.error("processPaymentStatusUpdate error", { reference, err });
   }
 }
+
+// -------------------------------------------------------------
+// Withdrawal request validation schema (manual payouts for now)
+// -------------------------------------------------------------
+const withdrawSchema = joi.object({
+  amount: joi.number().positive().precision(2).required().messages({
+    "number.base": "Amount must be a number",
+    "number.positive": "Amount must be greater than zero",
+    "any.required": "Amount is required",
+  }),
+  // Optional for future provider-specific handling
+  mobileMoneyProviderCode: joi.string().optional(),
+  destinationNumber: joi
+    .string()
+    .pattern(/^(\+263|263|07)[0-9]{8,9}$/)
+    .optional()
+    .messages({
+      "string.pattern.base":
+        "Destination number must be valid Zimbabwe format (+263XXXXXXXXX)",
+    }),
+});
 
 // GET /api/payments/test-connection - Test PesePay connection
 router.get("/test-connection", async (req: Request, res: Response) => {
@@ -625,5 +647,175 @@ router.get("/currencies", async (req: Request, res: Response) => {
     });
   }
 });
+
+// GET /api/payments/wallet - wallet summary
+router.get("/wallet", authenticate, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+
+    const payments = await prisma.payment.findMany({
+      where: {
+        userId,
+        status: {
+          in: [
+            PaymentStatus.COMPLETED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PROCESSING,
+            PaymentStatus.PENDING,
+          ],
+        },
+      },
+    });
+
+    let balance = 0;
+    payments.forEach((p) => {
+      if (p.type === "PRIZE_PAYOUT" && p.status === PaymentStatus.COMPLETED)
+        balance += p.amount;
+      // Lock funds as soon as withdrawal is requested (all non-failed statuses)
+      else if (p.type === "WITHDRAWAL") balance -= p.amount;
+      else if (p.type === "ENTRY_FEE" && p.status === PaymentStatus.COMPLETED)
+        balance -= p.amount;
+    });
+
+    res.json({ success: true, data: { balance } });
+  } catch (err) {
+    logger.error("Wallet summary error", { err });
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// GET /api/payments/wallet/transactions - list
+router.get(
+  "/wallet/transactions",
+  authenticate,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { page = 1, limit = 20 } = req.query as any;
+      const skip = (Number(page) - 1) * Number(limit);
+
+      const relevantStatuses: PaymentStatus[] = [
+        PaymentStatus.COMPLETED,
+        PaymentStatus.REFUNDED,
+        PaymentStatus.PROCESSING,
+        PaymentStatus.PENDING,
+      ];
+
+      const [transactions, total] = await Promise.all([
+        prisma.payment.findMany({
+          where: { userId, status: { in: relevantStatuses } },
+          orderBy: { createdAt: "desc" },
+          skip,
+          take: Number(limit),
+        }),
+        prisma.payment.count({
+          where: { userId, status: { in: relevantStatuses } },
+        }),
+      ]);
+
+      res.json({
+        success: true,
+        data: {
+          transactions,
+          pagination: {
+            total,
+            page: Number(page),
+            limit: Number(limit),
+            totalPages: Math.ceil(total / Number(limit)),
+          },
+        },
+      });
+    } catch (err) {
+      logger.error("Wallet tx error", { err });
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
+// POST /api/payments/withdraw  – Manual withdrawal request (no gateway call)
+router.post(
+  "/withdraw",
+  authenticate,
+  validateSchema(withdrawSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { amount, mobileMoneyProviderCode, destinationNumber } = req.body;
+
+      // ---------------------------------------------------------
+      // 1. Calculate current available balance (include pending withdrawals)
+      // ---------------------------------------------------------
+      const payments = await prisma.payment.findMany({
+        where: {
+          userId,
+          status: {
+            in: [
+              PaymentStatus.COMPLETED,
+              PaymentStatus.REFUNDED,
+              PaymentStatus.PROCESSING,
+              PaymentStatus.PENDING,
+            ],
+          },
+        },
+      });
+
+      let balance = 0;
+      payments.forEach((p) => {
+        if (p.type === "PRIZE_PAYOUT") balance += p.amount;
+        else if (p.type === "WITHDRAWAL" || p.type === "ENTRY_FEE")
+          balance -= p.amount;
+      });
+
+      if (amount > balance) {
+        res.status(400).json({
+          success: false,
+          message: "Insufficient balance for withdrawal",
+        });
+        return;
+      }
+
+      // ---------------------------------------------------------
+      // 2. Create payment row marked as PROCESSING (manual payout)
+      // ---------------------------------------------------------
+      const payment = await prisma.payment.create({
+        data: {
+          userId,
+          amount,
+          currency: "USD",
+          type: "WITHDRAWAL",
+          status: "PROCESSING",
+          metadata: {
+            mobileMoneyProviderCode,
+            destinationNumber,
+            requestedAt: new Date().toISOString(),
+            manualPayout: true,
+          },
+        },
+      });
+
+      logger.info("Withdrawal request created", {
+        paymentId: payment.id,
+        userId,
+      });
+
+      res.json({
+        success: true,
+        message: "Withdrawal request submitted and is now being processed",
+        data: {
+          paymentId: payment.id,
+          status: payment.status,
+        },
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      logger.error("Withdrawal request error", { err });
+      res.status(500).json({
+        success: false,
+        message: "Failed to create withdrawal request",
+        error: errorMessage,
+      });
+    }
+  }
+);
 
 export default router;
