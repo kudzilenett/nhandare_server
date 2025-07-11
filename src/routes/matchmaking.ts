@@ -137,15 +137,20 @@ router.post(
       });
     }
 
-    // Check if opponent is online
+    // Check if opponent is online and available (has general presence session)
     const isOnline = await prisma.gameSession.findFirst({
-      where: { userId: opponentId, isActive: true },
+      where: {
+        userId: opponentId,
+        isActive: true,
+        sessionType: "CASUAL",
+        matchId: null, // Available, not in a match
+      },
     });
 
     if (!isOnline) {
       return res.status(400).json({
         success: false,
-        message: "Opponent is not online",
+        message: "Opponent is not online or is currently in a game",
       });
     }
 
@@ -362,21 +367,54 @@ router.delete(
   })
 );
 
-// Online players & queue stats
+/**
+ * @route GET /api/games/online-players
+ * @desc Get online players and game activity stats
+ * @access Private
+ * @query list - Include list of available players (boolean)
+ * @returns {object} - {
+ *   online: number,        // Users online and available to play
+ *   activeSessions: number, // Users currently in games
+ *   byGame: object,        // Breakdown of active sessions by game type
+ *   players?: array        // Available players (if list=true)
+ * }
+ */
 router.get(
   "/online-players",
   authenticate,
   asyncHandler(async (req: Request, res: Response) => {
     const includeList = req.query.list === "true";
 
-    const [activeSessions, totalUsers] = await Promise.all([
-      prisma.gameSession.count({ where: { isActive: true } }),
-      prisma.user.count({ where: { isActive: true } }),
-    ]);
+    // Get general presence (users online but not necessarily in games)
+    const [generalPresenceSessions, activeGameSessions, totalUsers] =
+      await Promise.all([
+        // Users with general presence sessions (CASUAL type, no specific match)
+        prisma.gameSession.count({
+          where: {
+            isActive: true,
+            sessionType: "CASUAL",
+            matchId: null,
+          },
+        }),
+        // Users currently in active games (RANKED/TOURNAMENT type with matches)
+        prisma.gameSession.count({
+          where: {
+            isActive: true,
+            sessionType: { in: ["RANKED", "TOURNAMENT"] },
+            matchId: { not: null },
+          },
+        }),
+        prisma.user.count({ where: { isActive: true } }),
+      ]);
 
+    // Get breakdown by game type for active sessions
     const byGameAgg = await prisma.gameSession.groupBy({
       by: ["gameId"],
-      where: { isActive: true },
+      where: {
+        isActive: true,
+        sessionType: { in: ["RANKED", "TOURNAMENT"] }, // Only count active games
+        matchId: { not: null },
+      },
       _count: { _all: true },
     });
 
@@ -389,27 +427,53 @@ router.get(
       if (game) byGame[game.name] = row._count._all;
     }
 
-    const responseData: any = { online: totalUsers, activeSessions, byGame };
+    const responseData: any = {
+      online: generalPresenceSessions, // Users online and available
+      activeSessions: activeGameSessions, // Users currently playing games
+      byGame,
+    };
 
     if (includeList) {
+      // Get list of online users (those with general presence)
       const sessions = await prisma.gameSession.findMany({
-        where: { isActive: true },
-        distinct: ["userId"],
+        where: {
+          isActive: true,
+          sessionType: "CASUAL",
+          matchId: null,
+        },
         include: {
           user: {
             select: { id: true, username: true, avatar: true },
           },
         },
+        orderBy: { createdAt: "desc" },
         take: 100,
       });
-      responseData.players = sessions
-        .filter((s) => s.user.id !== req.user!.id)
-        .map((s) => ({
-          id: s.user.id,
-          username: s.user.username,
-          avatar: s.user.avatar,
-          isOnline: true,
-        }));
+
+      // Filter out current user and ensure unique users (in case of duplicate sessions)
+      const uniqueUsers = new Map();
+      for (const session of sessions) {
+        if (
+          session.user.id !== req.user!.id &&
+          !uniqueUsers.has(session.user.id)
+        ) {
+          uniqueUsers.set(session.user.id, {
+            id: session.user.id,
+            username: session.user.username,
+            avatar: session.user.avatar,
+            isOnline: true,
+          });
+        }
+      }
+
+      responseData.players = Array.from(uniqueUsers.values());
+
+      logger.info("Online players request", {
+        userId: req.user!.id,
+        totalSessions: sessions.length,
+        uniquePlayers: responseData.players.length,
+        playerIds: responseData.players.map((p) => p.id),
+      });
     }
 
     res.json({ success: true, data: responseData });
@@ -467,21 +531,47 @@ async function createMatchRecord(
     select: { id: true },
   });
 
-  // Create sessions for both players
-  await prisma.gameSession.create({
-    data: {
-      userId: player1Id,
-      gameId: game.id,
-      sessionType: "RANKED",
-    },
-  });
-  await prisma.gameSession.create({
-    data: {
-      userId: player2Id,
-      gameId: game.id,
-      sessionType: "RANKED",
-    },
-  });
+  // Transition players from general presence to in-game sessions
+  await Promise.all([
+    // Deactivate general presence sessions for both players
+    prisma.gameSession.updateMany({
+      where: {
+        userId: player1Id,
+        isActive: true,
+        sessionType: "CASUAL",
+        matchId: null,
+      },
+      data: { isActive: false },
+    }),
+    prisma.gameSession.updateMany({
+      where: {
+        userId: player2Id,
+        isActive: true,
+        sessionType: "CASUAL",
+        matchId: null,
+      },
+      data: { isActive: false },
+    }),
+    // Create new in-game sessions
+    prisma.gameSession.create({
+      data: {
+        userId: player1Id,
+        gameId: game.id,
+        sessionType: "RANKED",
+        matchId: match.id,
+        isActive: true,
+      },
+    }),
+    prisma.gameSession.create({
+      data: {
+        userId: player2Id,
+        gameId: game.id,
+        sessionType: "RANKED",
+        matchId: match.id,
+        isActive: true,
+      },
+    }),
+  ]);
 
   return match.id;
 }
@@ -552,13 +642,35 @@ async function acceptChallengeInvitation(
     },
   });
 
-  // Create game sessions for both players
+  // Transition both players from general presence to in-game sessions
   await Promise.all([
+    // Deactivate general presence sessions for both players
+    prisma.gameSession.updateMany({
+      where: {
+        userId: invitation.challengerId,
+        isActive: true,
+        sessionType: "CASUAL",
+        matchId: null,
+      },
+      data: { isActive: false },
+    }),
+    prisma.gameSession.updateMany({
+      where: {
+        userId: invitation.challengedId,
+        isActive: true,
+        sessionType: "CASUAL",
+        matchId: null,
+      },
+      data: { isActive: false },
+    }),
+    // Create new in-game sessions
     prisma.gameSession.create({
       data: {
         userId: invitation.challengerId,
         gameId: invitation.gameId,
         sessionType: "RANKED",
+        matchId: match.id,
+        isActive: true,
       },
     }),
     prisma.gameSession.create({
@@ -566,6 +678,8 @@ async function acceptChallengeInvitation(
         userId: invitation.challengedId,
         gameId: invitation.gameId,
         sessionType: "RANKED",
+        matchId: match.id,
+        isActive: true,
       },
     }),
   ]);

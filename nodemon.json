@@ -9,9 +9,14 @@
     "*.spec.ts",
     ".git",
     "prisma/migrations",
-    "ecosystem.config.js"
+    "ecosystem.config.js",
+    "*.log",
+    "*.tmp",
+    ".env*"
   ],
-  "delay": "2000",
+  "delay": "5000",
   "verbose": false,
-  "exec": "node --insecure-http-parser -r ts-node/register src/index.ts"
+  "exec": "node --insecure-http-parser -r ts-node/register src/index.ts",
+  "restartable": "rs",
+  "colours": false
 }

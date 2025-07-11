@@ -280,10 +280,12 @@ router.get(
         institution: true,
         isStudent: true,
         location: true,
+        avatar: true, // Added missing avatar field
         points: true,
         rank: true,
         gamesPlayed: true,
         gamesWon: true,
+        winRate: true, // Added missing winRate field
         isActive: true,
         isVerified: true,
         createdAt: true,
