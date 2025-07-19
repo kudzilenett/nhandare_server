@@ -50,6 +50,14 @@ model User {
   isActive   Boolean @default(true)
   isVerified Boolean @default(false)
 
+  // Admin and role management
+  role        String   @default("user") // user, admin, moderator, super_admin
+  permissions String[] @default([]) // Array of permission strings
+  
+  // Refresh token for authentication
+  refreshToken String?
+  refreshTokenExpiresAt DateTime?
+
   // Timestamps
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -101,8 +109,8 @@ model Tournament {
   id             String  @id @default(cuid())
   title          String
   description    String?
-  prizePool      Float   @default(0)
-  entryFee       Float   @default(0)
+  prizePool      Float   @default(0) // Stored with 2 decimal places (cents)
+  entryFee       Float   @default(0) // Stored with 2 decimal places (cents)
   maxPlayers     Int     @default(64)
   currentPlayers Int     @default(0)
 
@@ -173,7 +181,7 @@ model TournamentPlayer {
   currentRound Int     @default(1)
   isEliminated Boolean @default(false)
   placement    Int? // Final placement
-  prizeWon     Float   @default(0)
+  prizeWon     Float   @default(0) // Stored with 2 decimal places (cents)
 
   // Relations
   user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -361,7 +369,7 @@ model Payment {
   tournament   Tournament? @relation(fields: [tournamentId], references: [id])
 
   // Payment details
-  amount   Float
+  amount   Float // Stored with 2 decimal places (cents)
   currency String        @default("USD")
   type     PaymentType
   status   PaymentStatus @default(PENDING)
@@ -380,7 +388,7 @@ model Payment {
 
   // Exchange rate support (USD to ZWL if needed)
   exchangeRate  Float?
-  localAmount   Float? // Amount in local currency
+  localAmount   Float? // Amount in local currency (2 decimal places)
   localCurrency String? // ZWL, USD
 
   // Legacy payment processors (kept for backward compatibility)

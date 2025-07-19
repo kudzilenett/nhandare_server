@@ -316,10 +316,14 @@ export const schemas = {
       "string.max": "Title cannot exceed 100 characters",
     }),
     description: joi.string().max(1000).optional(),
-    gameId: joi.string().uuid().required().messages({
-      "any.required": "Game ID is required",
-      "string.guid": "Game ID must be a valid UUID",
-    }),
+    gameId: joi
+      .string()
+      .pattern(/^[a-zA-Z0-9_-]{20,}$/)
+      .required()
+      .messages({
+        "any.required": "Game ID is required",
+        "string.pattern.base": "Game ID must be a valid identifier",
+      }),
 
     // Prize and fee validation
     entryFee: joi.number().min(1).max(100).required().messages({
@@ -392,6 +396,61 @@ export const schemas = {
       .string()
       .valid("SINGLE_ELIMINATION", "DOUBLE_ELIMINATION", "ROUND_ROBIN", "SWISS")
       .default("SINGLE_ELIMINATION"),
+  }),
+
+  // Admin user management schemas
+  adminUserList: joi.object({
+    page: joi.string().pattern(/^\d+$/).default("1"),
+    limit: joi.string().pattern(/^\d+$/).default("20"),
+    search: joi.string().optional(),
+    status: joi.string().valid("active", "inactive", "banned").optional(),
+    role: joi.string().valid("user", "admin", "moderator").optional(),
+    sortBy: joi
+      .string()
+      .valid(
+        "username",
+        "status",
+        "role",
+        "lastActive",
+        "winRate",
+        "totalGamesPlayed"
+      )
+      .default("lastActive"),
+    sortOrder: joi.string().valid("asc", "desc").default("desc"),
+    hasPlayedGames: joi.string().valid("true", "false").optional(),
+    hasWalletBalance: joi.string().valid("true", "false").optional(),
+    dateRange: joi.string().optional(),
+  }),
+
+  createUser: joi.object({
+    username: joi.string().alphanum().min(3).max(20).required(),
+    email: joi.string().email().required(),
+    firstName: joi.string().min(2).max(50).required(),
+    lastName: joi.string().min(2).max(50).required(),
+    phoneNumber: joi
+      .string()
+      .pattern(/^(\+263|263|07)[0-9]{8,9}$/)
+      .optional(),
+    role: joi.string().valid("user", "admin", "moderator").default("user"),
+    status: joi.string().valid("active", "inactive").default("active"),
+    password: joi.string().min(8).required(),
+    sendWelcomeEmail: joi.boolean().default(false),
+  }),
+
+  updateUser: joi.object({
+    username: joi.string().alphanum().min(3).max(20).optional(),
+    email: joi.string().email().optional(),
+    firstName: joi.string().min(2).max(50).optional(),
+    lastName: joi.string().min(2).max(50).optional(),
+    phoneNumber: joi
+      .string()
+      .pattern(/^(\+263|263|07)[0-9]{8,9}$/)
+      .optional(),
+    role: joi.string().valid("user", "admin", "moderator").optional(),
+    status: joi.string().valid("active", "inactive", "banned").optional(),
+    walletBalance: joi.number().min(0).optional(),
+    isEmailVerified: joi.boolean().optional(),
+    isPhoneVerified: joi.boolean().optional(),
   }),
 };
 

@@ -52,6 +52,14 @@ export const authRateLimit = createRateLimit({
   skipSuccessfulRequests: true,
 });
 
+// Admin-specific rate limit - more lenient for admin access
+export const adminAuthRateLimit = createRateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // 20 attempts per window (more lenient)
+  message: "Too many admin authentication attempts, please try again later.",
+  skipSuccessfulRequests: true,
+});
+
 export const gameRateLimit = createRateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 30, // 30 game actions per minute
@@ -190,12 +198,15 @@ export const corsConfig = {
     const allowedOrigins = [
       env.FRONTEND_URL,
       env.SOCKET_CORS_ORIGIN,
+      // Admin panel URLs
+      env.ADMIN_PANEL_URL || "http://localhost:3000",
       // Allow Expo dev servers on local network (e.g., http://192.168.x.x:8081)
       ...(env.NODE_ENV === "development"
         ? [
             /^http:\/\/192\.168\.[0-9]{1,3}\.[0-9]{1,3}:8081$/,
             /^http:\/\/10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:8081$/,
             /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\.[0-9]{1,3}\.[0-9]{1,3}:8081$/,
+            "http://localhost:3000",
           ]
         : []),
     ];

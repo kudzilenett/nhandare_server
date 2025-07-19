@@ -22,6 +22,7 @@ const envSchema = joi
 
     // CORS
     FRONTEND_URL: joi.string().uri().required(),
+    ADMIN_PANEL_URL: joi.string().uri().default("http://localhost:3000"),
 
     // Rate Limiting
     RATE_LIMIT_WINDOW_MS: joi.number().default(900000), // 15 minutes
@@ -95,6 +96,7 @@ export interface Environment {
   JWT_SECRET: string;
   JWT_EXPIRE: string;
   FRONTEND_URL: string;
+  ADMIN_PANEL_URL: string;
   RATE_LIMIT_WINDOW_MS: number;
   RATE_LIMIT_MAX_REQUESTS: number;
   LOG_LEVEL: "error" | "warn" | "info" | "debug";

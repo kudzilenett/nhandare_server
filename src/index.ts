@@ -210,6 +210,20 @@ async function startServer() {
         console.log(`   GET  http://localhost:${env.PORT}/api/tournaments`);
         console.log(`   GET  http://localhost:${env.PORT}/api/leaderboard`);
       }
+
+      // Start periodic tournament completion check
+      setInterval(async () => {
+        try {
+          const { TournamentCompletionService } = await import(
+            "./services/TournamentCompletionService"
+          );
+          await TournamentCompletionService.checkAndCompleteTournaments();
+        } catch (error) {
+          logger.error("Error in periodic tournament completion check", {
+            error,
+          });
+        }
+      }, 5 * 60 * 1000); // Check every 5 minutes
     });
   } catch (error) {
     logger.error("❌ Failed to start server", { error });

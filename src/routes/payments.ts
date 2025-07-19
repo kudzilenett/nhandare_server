@@ -1,6 +1,6 @@
 import { Request, Response, Router } from "express";
 import { PrismaClient, PaymentStatus } from "@prisma/client";
-import { authenticate } from "../middleware/auth";
+import { authenticate, adminOnly, authorize } from "../middleware/auth";
 import {
   validateSchema,
   validateParams,
@@ -11,6 +11,7 @@ import pesePayService from "../services/pesepay";
 import logger from "../config/logger";
 import { env, isDevelopment } from "../config/environment";
 import joi from "joi";
+import { asyncHandler } from "../middleware/errorHandler";
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -812,6 +813,1359 @@ router.post(
       res.status(500).json({
         success: false,
         message: "Failed to create withdrawal request",
+        error: errorMessage,
+      });
+    }
+  }
+);
+
+// ===== ADMIN PAYMENT ENDPOINTS =====
+
+// GET /api/payments/admin/withdrawals - Get withdrawal requests (admin only)
+router.get(
+  "/admin/withdrawals",
+  authenticate,
+  adminOnly,
+  async (req: Request, res: Response) => {
+    try {
+      const {
+        page = 1,
+        limit = 20,
+        status,
+        sortBy = "createdAt",
+        sortOrder = "desc",
+        search,
+        userId,
+        startDate,
+        endDate,
+        minAmount,
+        maxAmount,
+      } = req.query;
+
+      // Build where clause for withdrawal requests
+      const where: any = {
+        type: "WITHDRAWAL",
+      };
+
+      if (status) {
+        where.status = Array.isArray(status) ? { in: status } : status;
+      }
+      if (userId) {
+        where.userId = userId;
+      }
+      if (startDate || endDate) {
+        where.createdAt = {};
+        if (startDate) where.createdAt.gte = new Date(startDate as string);
+        if (endDate) where.createdAt.lte = new Date(endDate as string);
+      }
+      if (minAmount || maxAmount) {
+        where.amount = {};
+        if (minAmount) where.amount.gte = parseFloat(minAmount as string);
+        if (maxAmount) where.amount.lte = parseFloat(maxAmount as string);
+      }
+
+      // Calculate pagination
+      const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+      const take = parseInt(limit as string);
+
+      // Get withdrawal requests with user details
+      const [withdrawals, total] = await Promise.all([
+        prisma.payment.findMany({
+          where,
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                phoneNumber: true,
+              },
+            },
+          },
+          orderBy: { [sortBy as string]: sortOrder },
+          skip,
+          take,
+        }),
+        prisma.payment.count({ where }),
+      ]);
+
+      // Transform data for admin interface
+      const withdrawalRequests = withdrawals.map((withdrawal) => ({
+        id: withdrawal.id,
+        userId: withdrawal.userId,
+        amount: withdrawal.amount,
+        currency: withdrawal.currency,
+        status: withdrawal.status.toLowerCase(),
+        destinationNumber: (withdrawal.metadata as any)?.destinationNumber,
+        mobileMoneyProviderCode: (withdrawal.metadata as any)
+          ?.mobileMoneyProviderCode,
+        requestedAt: withdrawal.createdAt.toISOString(),
+        processedAt: withdrawal.updatedAt.toISOString(),
+        failureReason: withdrawal.failureReason,
+        metadata: withdrawal.metadata,
+        user: withdrawal.user,
+      }));
+
+      const totalPages = Math.ceil(total / take);
+      const hasNextPage = parseInt(page as string) < totalPages;
+      const hasPreviousPage = parseInt(page as string) > 1;
+
+      res.json({
+        success: true,
+        data: {
+          withdrawals: withdrawalRequests,
+          pagination: {
+            currentPage: parseInt(page as string),
+            totalPages,
+            totalItems: total,
+            itemsPerPage: take,
+            hasNextPage,
+            hasPreviousPage,
+          },
+        },
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      logger.error("Error fetching withdrawal requests:", errorMessage);
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch withdrawal requests",
+        error: errorMessage,
+      });
+    }
+  }
+);
+
+// GET /api/payments/admin/withdrawals/stats - Get withdrawal statistics (admin only)
+router.get(
+  "/admin/withdrawals/stats",
+  authenticate,
+  adminOnly,
+  async (req: Request, res: Response) => {
+    try {
+      const { startDate, endDate } = req.query;
+
+      const where: any = {
+        type: "WITHDRAWAL",
+      };
+
+      if (startDate || endDate) {
+        where.createdAt = {};
+        if (startDate) where.createdAt.gte = new Date(startDate as string);
+        if (endDate) where.createdAt.lte = new Date(endDate as string);
+      }
+
+      // Get withdrawal statistics
+      const [
+        totalWithdrawals,
+        pendingWithdrawals,
+        completedWithdrawals,
+        failedWithdrawals,
+        totalAmount,
+        pendingAmount,
+        completedAmount,
+        averageAmount,
+        statusDistribution,
+      ] = await Promise.all([
+        // Total withdrawals
+        prisma.payment.count({ where }),
+        // Pending withdrawals
+        prisma.payment.count({
+          where: { ...where, status: "PROCESSING" },
+        }),
+        // Completed withdrawals
+        prisma.payment.count({
+          where: { ...where, status: "COMPLETED" },
+        }),
+        // Failed withdrawals
+        prisma.payment.count({
+          where: { ...where, status: "FAILED" },
+        }),
+        // Total amount
+        prisma.payment.aggregate({
+          where,
+          _sum: { amount: true },
+        }),
+        // Pending amount
+        prisma.payment.aggregate({
+          where: { ...where, status: "PROCESSING" },
+          _sum: { amount: true },
+        }),
+        // Completed amount
+        prisma.payment.aggregate({
+          where: { ...where, status: "COMPLETED" },
+          _sum: { amount: true },
+        }),
+        // Average amount
+        prisma.payment.aggregate({
+          where: { ...where, status: "COMPLETED" },
+          _avg: { amount: true },
+        }),
+        // Status distribution
+        prisma.payment.groupBy({
+          by: ["status"],
+          where,
+          _count: { status: true },
+          _sum: { amount: true },
+        }),
+      ]);
+
+      const successRate =
+        totalWithdrawals > 0
+          ? (completedWithdrawals / totalWithdrawals) * 100
+          : 0;
+
+      const avgAmount =
+        totalWithdrawals > 0 ? averageAmount._avg.amount || 0 : 0;
+
+      const statusDistributionFormatted = statusDistribution.map((item) => ({
+        status: item.status,
+        count: item._count.status,
+        amount: item._sum.amount || 0,
+        percentage:
+          totalWithdrawals > 0
+            ? (item._count.status / totalWithdrawals) * 100
+            : 0,
+      }));
+
+      res.json({
+        success: true,
+        data: {
+          totalWithdrawals,
+          pendingWithdrawals,
+          completedWithdrawals,
+          failedWithdrawals,
+          totalAmount: totalAmount._sum.amount || 0,
+          pendingAmount: pendingAmount._sum.amount || 0,
+          completedAmount: completedAmount._sum.amount || 0,
+          averageAmount: avgAmount,
+          successRate,
+          statusDistribution: statusDistributionFormatted,
+        },
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      logger.error("Error fetching withdrawal statistics:", errorMessage);
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch withdrawal statistics",
+        error: errorMessage,
+      });
+    }
+  }
+);
+
+// PUT /api/payments/admin/withdrawals/:id - Process withdrawal request (admin only)
+router.put(
+  "/admin/withdrawals/:id",
+  authenticate,
+  adminOnly,
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { status, failureReason, transactionReference } = req.body;
+
+      // Validate status
+      if (!["COMPLETED", "FAILED"].includes(status)) {
+        res.status(400).json({
+          success: false,
+          message: "Invalid status. Must be COMPLETED or FAILED",
+        });
+        return;
+      }
+
+      // Find the withdrawal request
+      const withdrawal = await prisma.payment.findFirst({
+        where: {
+          id,
+          type: "WITHDRAWAL",
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+
+      if (!withdrawal) {
+        res.status(404).json({
+          success: false,
+          message: "Withdrawal request not found",
+        });
+        return;
+      }
+
+      // Check if already processed
+      if (withdrawal.status !== "PROCESSING") {
+        res.status(400).json({
+          success: false,
+          message: "Withdrawal request has already been processed",
+        });
+        return;
+      }
+
+      // Update withdrawal status
+      const updatedWithdrawal = await prisma.payment.update({
+        where: { id },
+        data: {
+          status,
+          failureReason: status === "FAILED" ? failureReason : null,
+          metadata: {
+            ...(withdrawal.metadata as any),
+            transactionReference:
+              status === "COMPLETED" ? transactionReference : null,
+            processedAt: new Date().toISOString(),
+            processedBy: (req as any).user.id,
+          },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+
+      // If failed, log the failure (no wallet balance to refund in current schema)
+      if (status === "FAILED") {
+        logger.info("Withdrawal failed", {
+          service: "nhandare-backend",
+          withdrawalId: id,
+          userId: withdrawal.userId,
+          amount: withdrawal.amount,
+        });
+      }
+
+      logger.info("Withdrawal request processed", {
+        service: "nhandare-backend",
+        withdrawalId: id,
+        userId: withdrawal.userId,
+        status,
+        processedBy: (req as any).user.id,
+      });
+
+      res.json({
+        success: true,
+        data: {
+          withdrawal: {
+            id: updatedWithdrawal.id,
+            userId: updatedWithdrawal.userId,
+            amount: updatedWithdrawal.amount,
+            currency: updatedWithdrawal.currency,
+            status: updatedWithdrawal.status.toLowerCase(),
+            destinationNumber: (updatedWithdrawal.metadata as any)
+              ?.destinationNumber,
+            mobileMoneyProviderCode: (updatedWithdrawal.metadata as any)
+              ?.mobileMoneyProviderCode,
+            requestedAt: updatedWithdrawal.createdAt.toISOString(),
+            processedAt: updatedWithdrawal.updatedAt.toISOString(),
+            failureReason: updatedWithdrawal.failureReason,
+            user: updatedWithdrawal.user,
+          },
+        },
+      });
+      return;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      logger.error("Error processing withdrawal request:", errorMessage);
+      res.status(500).json({
+        success: false,
+        message: "Failed to process withdrawal request",
+        error: errorMessage,
+      });
+    }
+  }
+);
+
+// GET /api/payments/admin - Get all payments with admin filtering
+router.get(
+  "/admin",
+  authenticate,
+  adminOnly,
+  async (req: Request, res: Response) => {
+    try {
+      const {
+        page = 1,
+        limit = 20,
+        sortBy = "createdAt",
+        sortOrder = "desc",
+        status,
+        type,
+        currency,
+        paymentMethod,
+        search,
+        userId,
+        tournamentId,
+        startDate,
+        endDate,
+        minAmount,
+        maxAmount,
+      } = req.query;
+
+      // Build where clause
+      const where: any = {};
+
+      if (status) {
+        where.status = Array.isArray(status) ? { in: status } : status;
+      }
+      if (type) {
+        where.type = Array.isArray(type) ? { in: type } : type;
+      }
+      if (currency) {
+        where.currency = Array.isArray(currency) ? { in: currency } : currency;
+      }
+      if (paymentMethod) {
+        where.paymentMethodCode = Array.isArray(paymentMethod)
+          ? { in: paymentMethod }
+          : paymentMethod;
+      }
+      if (userId) {
+        where.userId = userId;
+      }
+      if (tournamentId) {
+        where.tournamentId = tournamentId;
+      }
+      if (startDate || endDate) {
+        where.createdAt = {};
+        if (startDate) where.createdAt.gte = new Date(startDate as string);
+        if (endDate) where.createdAt.lte = new Date(endDate as string);
+      }
+      if (minAmount || maxAmount) {
+        where.amount = {};
+        if (minAmount) where.amount.gte = parseFloat(minAmount as string);
+        if (maxAmount) where.amount.lte = parseFloat(maxAmount as string);
+      }
+
+      // Handle search
+      if (search) {
+        where.OR = [
+          {
+            pesePayReference: {
+              contains: search as string,
+              mode: "insensitive",
+            },
+          },
+          {
+            pesePayTransactionId: {
+              contains: search as string,
+              mode: "insensitive",
+            },
+          },
+          {
+            user: {
+              username: { contains: search as string, mode: "insensitive" },
+            },
+          },
+          {
+            user: {
+              email: { contains: search as string, mode: "insensitive" },
+            },
+          },
+        ];
+      }
+
+      const skip = (Number(page) - 1) * Number(limit);
+
+      // Get payments with user and tournament data
+      const [payments, total] = await Promise.all([
+        prisma.payment.findMany({
+          where,
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
+            tournament: {
+              select: {
+                id: true,
+                title: true,
+                game: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: { [sortBy as string]: sortOrder },
+          skip,
+          take: Number(limit),
+        }),
+        prisma.payment.count({ where }),
+      ]);
+
+      // Calculate statistics
+      const totalAmount = await prisma.payment.aggregate({
+        where: { ...where, status: "COMPLETED" },
+        _sum: { amount: true },
+      });
+
+      const completedPayments = await prisma.payment.count({
+        where: { ...where, status: "COMPLETED" },
+      });
+
+      const successRate = total > 0 ? (completedPayments / total) * 100 : 0;
+
+      res.json({
+        success: true,
+        data: {
+          payments,
+          pagination: {
+            currentPage: Number(page),
+            totalPages: Math.ceil(total / Number(limit)),
+            totalItems: total,
+            itemsPerPage: Number(limit),
+            hasNextPage: Number(page) < Math.ceil(total / Number(limit)),
+            hasPreviousPage: Number(page) > 1,
+          },
+          totalAmount: totalAmount._sum.amount || 0,
+          averageAmount: total > 0 ? (totalAmount._sum.amount || 0) / total : 0,
+          successRate,
+        },
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      logger.error("Error fetching admin payments:", errorMessage);
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch payments",
+        error: errorMessage,
+      });
+    }
+  }
+);
+
+// GET /api/payments/admin/prize-payouts - Get all prize payout payments (admin only)
+router.get(
+  "/admin/prize-payouts",
+  authenticate,
+  adminOnly,
+  asyncHandler(async (req: Request, res: Response) => {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const offset = (page - 1) * limit;
+
+    try {
+      const [payments, total] = await Promise.all([
+        prisma.payment.findMany({
+          where: {
+            type: "PRIZE_PAYOUT",
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
+            tournament: {
+              select: {
+                id: true,
+                title: true,
+                game: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
+          skip: offset,
+          take: limit,
+        }),
+        prisma.payment.count({
+          where: {
+            type: "PRIZE_PAYOUT",
+          },
+        }),
+      ]);
+
+      const totalPages = Math.ceil(total / limit);
+
+      res.json({
+        success: true,
+        data: {
+          payments,
+          pagination: {
+            currentPage: page,
+            totalPages,
+            totalItems: total,
+            itemsPerPage: limit,
+            hasNextPage: page < totalPages,
+            hasPreviousPage: page > 1,
+          },
+        },
+      });
+    } catch (error) {
+      logger.error("Error fetching prize payouts", { error });
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch prize payouts",
+      });
+    }
+  })
+);
+
+// GET /api/payments/admin/:id - Get payment details for admin
+router.get(
+  "/admin/:id",
+  authenticate,
+  adminOnly,
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const payment = await prisma.payment.findUnique({
+        where: { id },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+          tournament: {
+            select: {
+              id: true,
+              title: true,
+              game: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!payment) {
+        res.status(404).json({
+          success: false,
+          message: "Payment not found",
+        });
+        return;
+      }
+
+      // Get audit trail (mock for now - would need separate audit table)
+      const auditTrail = [
+        {
+          id: "audit1",
+          action: "Payment Created",
+          previousStatus: "",
+          newStatus: payment.status,
+          performedBy: "System",
+          reason: "Payment initiated",
+          createdAt: payment.createdAt,
+        },
+        {
+          id: "audit2",
+          action: "Status Updated",
+          previousStatus: "PENDING",
+          newStatus: payment.status,
+          performedBy: "PesePay Webhook",
+          reason: "Payment processed",
+          createdAt: payment.updatedAt,
+        },
+      ];
+
+      res.json({
+        success: true,
+        data: {
+          ...payment,
+          auditTrail,
+          refundHistory: [], // Would need separate refund table
+        },
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      logger.error("Error fetching payment details:", errorMessage);
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch payment details",
+        error: errorMessage,
+      });
+    }
+  }
+);
+
+// PUT /api/payments/admin/:id/status - Update payment status (admin only)
+router.put(
+  "/admin/:id/status",
+  authenticate,
+  adminOnly,
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { status, reason, failureReason } = req.body;
+
+      const payment = await prisma.payment.findUnique({
+        where: { id },
+      });
+
+      if (!payment) {
+        res.status(404).json({
+          success: false,
+          message: "Payment not found",
+        });
+        return;
+      }
+
+      const previousStatus = payment.status;
+
+      // Update payment status
+      const updatedPayment = await prisma.payment.update({
+        where: { id },
+        data: {
+          status,
+          failureReason: failureReason || payment.failureReason,
+          updatedAt: new Date(),
+        },
+      });
+
+      // Log the status change (in a real implementation, this would go to an audit table)
+      logger.info("Admin payment status update", {
+        paymentId: id,
+        previousStatus,
+        newStatus: status,
+        updatedBy: req.user?.id,
+        reason,
+      });
+
+      res.json({
+        success: true,
+        message: "Payment status updated successfully",
+        data: updatedPayment,
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      logger.error("Error updating payment status:", errorMessage);
+      res.status(500).json({
+        success: false,
+        message: "Failed to update payment status",
+        error: errorMessage,
+      });
+    }
+  }
+);
+
+// POST /api/payments/admin/:id/refund - Process refund (admin only)
+router.post(
+  "/admin/:id/refund",
+  authenticate,
+  adminOnly,
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { amount, reason } = req.body;
+
+      const payment = await prisma.payment.findUnique({
+        where: { id },
+      });
+
+      if (!payment) {
+        res.status(404).json({
+          success: false,
+          message: "Payment not found",
+        });
+        return;
+      }
+
+      if (payment.status !== "COMPLETED") {
+        res.status(400).json({
+          success: false,
+          message: "Can only refund completed payments",
+        });
+        return;
+      }
+
+      const refundAmount = amount || payment.amount;
+
+      if (refundAmount > payment.amount) {
+        res.status(400).json({
+          success: false,
+          message: "Refund amount cannot exceed original payment amount",
+        });
+        return;
+      }
+
+      // Create refund payment record
+      const refundPayment = await prisma.payment.create({
+        data: {
+          userId: payment.userId,
+          tournamentId: payment.tournamentId,
+          amount: refundAmount,
+          currency: payment.currency,
+          type: "REFUND",
+          status: "PROCESSING",
+          metadata: {
+            originalPaymentId: payment.id,
+            originalAmount: payment.amount,
+            refundReason: reason,
+            processedBy: req.user?.id,
+            processedAt: new Date().toISOString(),
+          },
+        },
+      });
+
+      // Update original payment status to REFUNDED
+      await prisma.payment.update({
+        where: { id },
+        data: {
+          status: "REFUNDED",
+          updatedAt: new Date(),
+        },
+      });
+
+      res.json({
+        success: true,
+        message: "Refund processed successfully",
+        data: {
+          id: refundPayment.id,
+          amount: refundAmount,
+          reason,
+          status: refundPayment.status,
+          processedBy: req.user?.id,
+          processedAt: new Date(),
+        },
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      logger.error("Error processing refund:", errorMessage);
+      res.status(500).json({
+        success: false,
+        message: "Failed to process refund",
+        error: errorMessage,
+      });
+    }
+  }
+);
+
+// GET /api/payments/admin/analytics - Get payment analytics
+router.get(
+  "/admin/analytics",
+  authenticate,
+  adminOnly,
+  async (req: Request, res: Response) => {
+    try {
+      const { startDate, endDate } = req.query;
+
+      const where: any = {};
+      if (startDate || endDate) {
+        where.createdAt = {};
+        if (startDate) where.createdAt.gte = new Date(startDate as string);
+        if (endDate) where.createdAt.lte = new Date(endDate as string);
+      }
+
+      // Get analytics data
+      const [
+        totalRevenue,
+        revenueThisMonth,
+        revenueLastMonth,
+        totalTransactions,
+        transactionsThisMonth,
+        successRate,
+        failureRate,
+        refundRate,
+        averageTransactionValue,
+        statusDistribution,
+        paymentMethodDistribution,
+      ] = await Promise.all([
+        // Total revenue
+        prisma.payment.aggregate({
+          where: { ...where, status: "COMPLETED" },
+          _sum: { amount: true },
+        }),
+        // This month revenue
+        prisma.payment.aggregate({
+          where: {
+            ...where,
+            status: "COMPLETED",
+            createdAt: {
+              gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+            },
+          },
+          _sum: { amount: true },
+        }),
+        // Last month revenue
+        prisma.payment.aggregate({
+          where: {
+            ...where,
+            status: "COMPLETED",
+            createdAt: {
+              gte: new Date(
+                new Date().getFullYear(),
+                new Date().getMonth() - 1,
+                1
+              ),
+              lt: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+            },
+          },
+          _sum: { amount: true },
+        }),
+        // Total transactions
+        prisma.payment.count({ where }),
+        // This month transactions
+        prisma.payment.count({
+          where: {
+            ...where,
+            createdAt: {
+              gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+            },
+          },
+        }),
+        // Success rate
+        prisma.payment.count({
+          where: { ...where, status: "COMPLETED" },
+        }),
+        // Failure rate
+        prisma.payment.count({
+          where: { ...where, status: "FAILED" },
+        }),
+        // Refund rate
+        prisma.payment.count({
+          where: { ...where, type: "REFUND" },
+        }),
+        // Average transaction value
+        prisma.payment.aggregate({
+          where: { ...where, status: "COMPLETED" },
+          _avg: { amount: true },
+        }),
+        // Status distribution
+        prisma.payment.groupBy({
+          by: ["status"],
+          where,
+          _count: { status: true },
+          _sum: { amount: true },
+        }),
+        // Payment method distribution
+        prisma.payment.groupBy({
+          by: ["paymentMethodCode"],
+          where: { ...where, status: "COMPLETED" },
+          _count: { paymentMethodCode: true },
+          _sum: { amount: true },
+        }),
+      ]);
+
+      const total = await prisma.payment.count({ where });
+
+      res.json({
+        success: true,
+        data: {
+          totalRevenue: totalRevenue._sum.amount || 0,
+          revenueThisMonth: revenueThisMonth._sum.amount || 0,
+          revenueLastMonth: revenueLastMonth._sum.amount || 0,
+          totalTransactions,
+          transactionsThisMonth,
+          successRate: total > 0 ? (successRate / total) * 100 : 0,
+          failureRate: total > 0 ? (failureRate / total) * 100 : 0,
+          refundRate: total > 0 ? (refundRate / total) * 100 : 0,
+          averageTransactionValue: averageTransactionValue._avg.amount || 0,
+          statusDistribution: statusDistribution.map((item) => ({
+            status: item.status,
+            count: item._count.status,
+            percentage: total > 0 ? (item._count.status / total) * 100 : 0,
+            amount: item._sum.amount || 0,
+          })),
+          popularPaymentMethods: paymentMethodDistribution.map((item) => ({
+            method: item.paymentMethodCode || "Unknown",
+            count: item._count.paymentMethodCode,
+            percentage:
+              total > 0 ? (item._count.paymentMethodCode / total) * 100 : 0,
+            totalAmount: item._sum.amount || 0,
+          })),
+        },
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      logger.error("Error fetching payment analytics:", errorMessage);
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch analytics",
+        error: errorMessage,
+      });
+    }
+  }
+);
+
+// GET /api/payments/admin/filters - Get filter options
+router.get(
+  "/admin/filters",
+  authenticate,
+  adminOnly,
+  async (req: Request, res: Response) => {
+    try {
+      const [statuses, types, currencies, paymentMethods] = await Promise.all([
+        prisma.payment.groupBy({
+          by: ["status"],
+          _count: { status: true },
+        }),
+        prisma.payment.groupBy({
+          by: ["type"],
+          _count: { type: true },
+        }),
+        prisma.payment.groupBy({
+          by: ["currency"],
+          _count: { currency: true },
+        }),
+        prisma.payment.groupBy({
+          by: ["paymentMethodCode"],
+          _count: { paymentMethodCode: true },
+        }),
+      ]);
+
+      res.json({
+        success: true,
+        data: {
+          statuses: statuses.map((item) => ({
+            label: item.status,
+            value: item.status,
+            count: item._count.status,
+          })),
+          types: types.map((item) => ({
+            label: item.type,
+            value: item.type,
+            count: item._count.type,
+          })),
+          currencies: currencies.map((item) => ({
+            label: item.currency,
+            value: item.currency,
+            count: item._count.currency,
+          })),
+          paymentMethods: paymentMethods.map((item) => ({
+            label: item.paymentMethodCode || "Unknown",
+            value: item.paymentMethodCode || "Unknown",
+            count: item._count.paymentMethodCode,
+          })),
+        },
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      logger.error("Error fetching filter options:", errorMessage);
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch filter options",
+        error: errorMessage,
+      });
+    }
+  }
+);
+
+// PUT /api/payments/admin/bulk-update - Bulk update payment statuses
+router.put(
+  "/admin/bulk-update",
+  authenticate,
+  adminOnly,
+  async (req: Request, res: Response) => {
+    try {
+      const { paymentIds, status, reason } = req.body;
+
+      if (!Array.isArray(paymentIds) || paymentIds.length === 0) {
+        res.status(400).json({
+          success: false,
+          message: "Payment IDs array is required",
+        });
+        return;
+      }
+
+      let success = 0;
+      let failed = 0;
+      const errors: Array<{ paymentId: string; error: string }> = [];
+
+      for (const paymentId of paymentIds) {
+        try {
+          await prisma.payment.update({
+            where: { id: paymentId },
+            data: {
+              status,
+              failureReason: reason,
+              updatedAt: new Date(),
+            },
+          });
+          success++;
+        } catch (error) {
+          failed++;
+          errors.push({
+            paymentId,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        message: `Bulk update completed. ${success} successful, ${failed} failed.`,
+        data: {
+          success,
+          failed,
+          errors,
+        },
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      logger.error("Error bulk updating payments:", errorMessage);
+      res.status(500).json({
+        success: false,
+        message: "Failed to bulk update payments",
+        error: errorMessage,
+      });
+    }
+  }
+);
+
+// GET /api/payments/admin/search - Search payments by reference
+router.get(
+  "/admin/search",
+  authenticate,
+  adminOnly,
+  async (req: Request, res: Response) => {
+    try {
+      const { reference } = req.query;
+
+      if (!reference) {
+        res.status(400).json({
+          success: false,
+          message: "Reference parameter is required",
+        });
+        return;
+      }
+
+      const payments = await prisma.payment.findMany({
+        where: {
+          OR: [
+            {
+              pesePayReference: {
+                contains: reference as string,
+                mode: "insensitive",
+              },
+            },
+            {
+              pesePayTransactionId: {
+                contains: reference as string,
+                mode: "insensitive",
+              },
+            },
+          ],
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+          tournament: {
+            select: {
+              id: true,
+              title: true,
+              game: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      res.json({
+        success: true,
+        data: {
+          payments,
+        },
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      logger.error("Error searching payments:", errorMessage);
+      res.status(500).json({
+        success: false,
+        message: "Failed to search payments",
+        error: errorMessage,
+      });
+    }
+  }
+);
+
+// POST /api/payments/admin/prize-payout - Create prize payout (admin only)
+router.post(
+  "/admin/prize-payout",
+  authenticate,
+  adminOnly,
+  async (req: Request, res: Response) => {
+    try {
+      const {
+        userId,
+        amount,
+        tournamentId,
+        reason,
+        currency = "USD",
+      } = req.body;
+
+      // Validate required fields
+      if (!userId || !amount || !tournamentId) {
+        res.status(400).json({
+          success: false,
+          message: "userId, amount, and tournamentId are required",
+        });
+        return;
+      }
+
+      // Validate amount
+      if (amount <= 0) {
+        res.status(400).json({
+          success: false,
+          message: "Amount must be greater than zero",
+        });
+        return;
+      }
+
+      // Check if user exists
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+        },
+      });
+
+      if (!user) {
+        res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+        return;
+      }
+
+      // Check if tournament exists (optional validation)
+      if (tournamentId) {
+        const tournament = await prisma.tournament.findUnique({
+          where: { id: tournamentId },
+          select: { id: true, title: true },
+        });
+
+        if (!tournament) {
+          res.status(404).json({
+            success: false,
+            message: "Tournament not found",
+          });
+          return;
+        }
+      }
+
+      // Create prize payout payment
+      const prizePayout = await prisma.payment.create({
+        data: {
+          userId,
+          amount,
+          currency,
+          type: "PRIZE_PAYOUT",
+          status: "COMPLETED", // Prize payouts are immediately completed
+          tournamentId,
+          metadata: {
+            reason: reason || "Tournament prize payout",
+            processedBy: req.user?.id,
+            processedAt: new Date().toISOString(),
+            adminNotes: req.body.adminNotes,
+          },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+          tournament: {
+            select: {
+              id: true,
+              title: true,
+              game: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // Log the action
+      logger.info("Prize payout created", {
+        payoutId: prizePayout.id,
+        userId,
+        amount,
+        tournamentId,
+        processedBy: req.user?.id,
+        reason,
+      });
+
+      res.json({
+        success: true,
+        message: "Prize payout created successfully",
+        data: {
+          id: prizePayout.id,
+          amount: prizePayout.amount,
+          currency: prizePayout.currency,
+          status: prizePayout.status,
+          createdAt: prizePayout.createdAt.toISOString(),
+          user: prizePayout.user,
+          tournament: prizePayout.tournament,
+        },
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      logger.error("Error creating prize payout:", errorMessage);
+      res.status(500).json({
+        success: false,
+        message: "Failed to create prize payout",
         error: errorMessage,
       });
     }

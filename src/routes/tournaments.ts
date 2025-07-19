@@ -10,6 +10,7 @@ import {
 } from "../middleware/validation";
 import { asyncHandler, createError } from "../middleware/errorHandler";
 import logger from "../config/logger";
+import { roundToCents } from "../utils/currency";
 
 const router = Router();
 
@@ -257,8 +258,8 @@ router.post(
         title,
         description,
         gameId,
-        entryFee,
-        prizePool,
+        entryFee: roundToCents(entryFee),
+        prizePool: roundToCents(prizePool),
         maxPlayers,
         province,
         city,
@@ -705,6 +706,228 @@ router.get(
       .reverse(); // chronological
 
     res.json({ success: true, data: { messages: formatted } });
+  })
+);
+
+// POST /api/tournaments/:id/complete - Manually complete tournament (admin only)
+router.post(
+  "/:id/complete",
+  authenticate,
+  adminOnly,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    try {
+      const { TournamentCompletionService } = await import(
+        "../services/TournamentCompletionService"
+      );
+
+      const result = await TournamentCompletionService.completeTournament(id);
+
+      if (result.success) {
+        logger.info("Tournament manually completed by admin", {
+          tournamentId: id,
+          adminId: req.user!.id,
+          winners: result.winners,
+        });
+
+        res.json({
+          success: true,
+          message: result.message,
+          data: {
+            tournamentId: id,
+            winners: result.winners,
+            completedAt: new Date().toISOString(),
+          },
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          message: result.message,
+        });
+      }
+    } catch (error) {
+      logger.error("Error manually completing tournament", {
+        tournamentId: id,
+        adminId: req.user!.id,
+        error,
+      });
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to complete tournament",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// POST /api/tournaments/test-completion - Test tournament completion with mock data (admin only)
+router.post(
+  "/test-completion",
+  authenticate,
+  adminOnly,
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const { TournamentCompletionService } = await import(
+        "../services/TournamentCompletionService"
+      );
+
+      // Create a test tournament with completed matches
+      const testTournament = await prisma.tournament.create({
+        data: {
+          title: "Test Tournament - Auto Completion",
+          description: "Test tournament for automatic completion",
+          gameId: "cmdagyyhf000xj02s4mbksft5", // Chess game
+          entryFee: 0,
+          prizePool: 100,
+          maxPlayers: 4,
+          currentPlayers: 4,
+          status: "ACTIVE",
+          province: "Harare",
+          city: "Harare",
+          location: "Test Location",
+          isOnlineOnly: true,
+          targetAudience: "public",
+          category: "PUBLIC",
+          difficultyLevel: "beginner",
+          prizeBreakdown: {
+            first: 60,
+            second: 25,
+            third: 15,
+          },
+          registrationStart: new Date(),
+          registrationEnd: new Date(),
+          startDate: new Date(),
+          endDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+          bracketType: "SINGLE_ELIMINATION",
+        },
+      });
+
+      // Create 4 test players
+      const testPlayers = await Promise.all([
+        prisma.tournamentPlayer.create({
+          data: {
+            userId: "cmdagz2ab0011j02s6afi6q11", // admin
+            tournamentId: testTournament.id,
+            joinedAt: new Date(),
+            isActive: true,
+            seedNumber: 1,
+          },
+        }),
+        prisma.tournamentPlayer.create({
+          data: {
+            userId: "cmdagz2k0002aj02sfg0ba2h3", // another user
+            tournamentId: testTournament.id,
+            joinedAt: new Date(),
+            isActive: true,
+            seedNumber: 2,
+          },
+        }),
+        prisma.tournamentPlayer.create({
+          data: {
+            userId: "cmdagz2jc0029j02s8652qsd0", // third user
+            tournamentId: testTournament.id,
+            joinedAt: new Date(),
+            isActive: true,
+            seedNumber: 3,
+          },
+        }),
+        prisma.tournamentPlayer.create({
+          data: {
+            userId: "cmdagz2k6002bj02sthycopg7", // fourth user
+            tournamentId: testTournament.id,
+            joinedAt: new Date(),
+            isActive: true,
+            seedNumber: 4,
+          },
+        }),
+      ]);
+
+      // Create completed matches for a simple bracket
+      const matches = await Promise.all([
+        // Semifinal 1: Player 1 vs Player 2
+        prisma.match.create({
+          data: {
+            player1Id: testPlayers[0].userId,
+            player2Id: testPlayers[1].userId,
+            gameId: "cmdagyyhf000xj02s4mbksft5",
+            tournamentId: testTournament.id,
+            round: 1,
+            status: "COMPLETED",
+            result: "PLAYER1_WIN",
+            winnerId: testPlayers[0].userId,
+            duration: 1800,
+            createdAt: new Date(),
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          },
+        }),
+        // Semifinal 2: Player 3 vs Player 4
+        prisma.match.create({
+          data: {
+            player1Id: testPlayers[2].userId,
+            player2Id: testPlayers[3].userId,
+            gameId: "cmdagyyhf000xj02s4mbksft5",
+            tournamentId: testTournament.id,
+            round: 1,
+            status: "COMPLETED",
+            result: "PLAYER2_WIN",
+            winnerId: testPlayers[3].userId,
+            duration: 2100,
+            createdAt: new Date(),
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          },
+        }),
+        // Final: Winner of semifinal 1 vs Winner of semifinal 2
+        prisma.match.create({
+          data: {
+            player1Id: testPlayers[0].userId,
+            player2Id: testPlayers[3].userId,
+            gameId: "cmdagyyhf000xj02s4mbksft5",
+            tournamentId: testTournament.id,
+            round: 2,
+            status: "COMPLETED",
+            result: "PLAYER1_WIN",
+            winnerId: testPlayers[0].userId,
+            duration: 2400,
+            createdAt: new Date(),
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          },
+        }),
+      ]);
+
+      // Now test the completion
+      const result = await TournamentCompletionService.completeTournament(
+        testTournament.id
+      );
+
+      logger.info("Test tournament completion result", {
+        tournamentId: testTournament.id,
+        result,
+      });
+
+      res.json({
+        success: true,
+        message: "Test tournament created and completed",
+        data: {
+          tournamentId: testTournament.id,
+          result,
+          matches: matches.length,
+          players: testPlayers.length,
+        },
+      });
+    } catch (error) {
+      logger.error("Error in test tournament completion", { error });
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to test tournament completion",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
   })
 );
 

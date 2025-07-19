@@ -242,10 +242,82 @@ export const authorize = (roles: string[]) => {
 };
 
 // Admin only authorization
-export const adminOnly = authorize(["admin"]);
+export const adminOnly = authorize(["admin", "super_admin"]);
 
 // Moderator or admin authorization
-export const moderatorOrAdmin = authorize(["moderator", "admin"]);
+export const moderatorOrAdmin = authorize([
+  "moderator",
+  "admin",
+  "super_admin",
+]);
+
+// Permission-based authorization
+export const requirePermission = (permission: string) => {
+  return async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+      return;
+    }
+
+    // Super admins have all permissions
+    if (req.user.role === "super_admin") {
+      next();
+      return;
+    }
+
+    // Check user permissions in database
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { permissions: true, role: true },
+    });
+
+    if (!user) {
+      res.status(401).json({
+        success: false,
+        message: "User not found",
+      });
+      return;
+    }
+
+    const hasPermission = user.permissions.includes(permission);
+
+    if (!hasPermission) {
+      logSecurity("Insufficient permissions for specific action", {
+        ip: req.ip,
+        userAgent: req.get("User-Agent"),
+        url: req.url,
+        userId: req.user.id,
+        userRole: req.user.role,
+        requiredPermission: permission,
+        userPermissions: user.permissions,
+      });
+
+      res.status(403).json({
+        success: false,
+        message: `Insufficient permissions. Required: ${permission}`,
+      });
+      return;
+    }
+
+    next();
+  };
+};
+
+// Common permission helpers
+export const requireUserManagement = requirePermission("users:manage");
+export const requireTournamentManagement =
+  requirePermission("tournaments:manage");
+export const requirePaymentManagement = requirePermission("payments:manage");
+export const requireAnalyticsView = requirePermission("analytics:view");
+export const requireContentModeration = requirePermission("content:moderate");
+export const requireSystemConfiguration = requirePermission("system:configure");
 
 // User ownership check (user can only access their own resources)
 export const checkOwnership = (userIdParam: string = "userId") => {

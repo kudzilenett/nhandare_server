@@ -654,6 +654,55 @@ export const initializeSocket = (io: SocketServer) => {
               winnerId
             );
 
+            // Check if tournament should be completed after this match
+            if (match.tournamentId) {
+              try {
+                const { TournamentCompletionService } = await import(
+                  "../services/TournamentCompletionService"
+                );
+                const isReady =
+                  await TournamentCompletionService.isTournamentReadyForCompletion(
+                    match.tournamentId
+                  );
+                if (isReady) {
+                  logger.info("Tournament ready for completion after match", {
+                    tournamentId: match.tournamentId,
+                    matchId: match.id,
+                  });
+
+                  // Complete tournament asynchronously to avoid blocking the match completion
+                  TournamentCompletionService.completeTournament(
+                    match.tournamentId
+                  )
+                    .then((result) => {
+                      if (result.success) {
+                        logger.info("Tournament auto-completed", {
+                          tournamentId: match.tournamentId,
+                          winners: result.winners,
+                        });
+
+                        // Emit tournament completion event
+                        io.emit("tournament:completed", {
+                          tournamentId: match.tournamentId,
+                          winners: result.winners,
+                        });
+                      }
+                    })
+                    .catch((error) => {
+                      logger.error("Error auto-completing tournament", {
+                        tournamentId: match.tournamentId,
+                        error,
+                      });
+                    });
+                }
+              } catch (error) {
+                logger.error("Error checking tournament completion", {
+                  tournamentId: match.tournamentId,
+                  error,
+                });
+              }
+            }
+
             // Broadcast game completion to all players
             if (socket.gameRoom) {
               io.to(socket.gameRoom).emit("game-completed", {

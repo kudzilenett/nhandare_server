@@ -13,6 +13,11 @@ import * as bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
+// Utility function for rounding to cents
+function roundToCents(amount: number): number {
+  return Math.round(amount * 100) / 100;
+}
+
 // Helper function to generate random date within a range
 function randomDate(start: Date, end: Date): Date {
   return new Date(
@@ -31,12 +36,11 @@ function generateZimbabwePhone(): string {
 async function main() {
   console.log("🇿🇼 Seeding comprehensive Zimbabwe gaming platform (2025)...");
 
-  // Clean up existing data
+  // Clean up existing data (order matters due to foreign key constraints)
   await prisma.userAchievement.deleteMany();
   await prisma.achievement.deleteMany();
   await prisma.tournamentChatMessage.deleteMany();
-  // Note: ChallengeInvitation model may not exist in generated client yet
-  // await prisma.challengeInvitation.deleteMany();
+  await prisma.challengeInvitation.deleteMany(); // Delete challenge invitations first
   await prisma.gameStatistic.deleteMany();
   await prisma.gameSession.deleteMany();
   await prisma.match.deleteMany();
@@ -316,7 +320,7 @@ async function main() {
   // 5. Create comprehensive users (50 users for extensive testing)
   console.log("👥 Creating comprehensive user profiles...");
   const userProfiles: any[] = [
-    // Admin user
+    // Super Admin user
     {
       email: "admin@nhandare.co.zw",
       username: "admin",
@@ -331,6 +335,57 @@ async function main() {
       isVerified: true,
       points: 10000,
       rank: 1,
+      role: "super_admin",
+      permissions: [
+        "users:manage",
+        "tournaments:manage",
+        "payments:manage",
+        "games:manage",
+        "analytics:view",
+        "system:configure",
+        "content:moderate",
+      ],
+    },
+    // Regular Admin user
+    {
+      email: "admin.manager@nhandare.co.zw",
+      username: "admin_manager",
+      password: await bcrypt.hash("admin123", 10),
+      firstName: "Admin",
+      lastName: "Manager",
+      phoneNumber: generateZimbabwePhone(),
+      province: "Bulawayo",
+      city: "Bulawayo",
+      location: "Bulawayo, Zimbabwe",
+      isActive: true,
+      isVerified: true,
+      points: 5000,
+      rank: 2,
+      role: "admin",
+      permissions: [
+        "users:manage",
+        "tournaments:manage",
+        "payments:view",
+        "analytics:view",
+      ],
+    },
+    // Moderator user
+    {
+      email: "moderator@nhandare.co.zw",
+      username: "moderator",
+      password: await bcrypt.hash("mod123", 10),
+      firstName: "Content",
+      lastName: "Moderator",
+      phoneNumber: generateZimbabwePhone(),
+      province: "Manicaland",
+      city: "Mutare",
+      location: "Mutare, Zimbabwe",
+      isActive: true,
+      isVerified: true,
+      points: 2500,
+      rank: 10,
+      role: "moderator",
+      permissions: ["content:moderate", "users:view", "tournaments:view"],
     },
   ];
 
@@ -461,6 +516,8 @@ async function main() {
       winRate: Math.random() * 0.6 + 0.2, // 20% to 80% win rate
       bio: `Gaming enthusiast from ${province}. Love strategic games!`,
       avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${firstName}${lastName}`,
+      role: "user", // Regular users
+      permissions: [], // No special permissions for regular users
       createdAt: randomDate(new Date("2024-01-01"), new Date("2024-12-31")),
       lastLogin: randomDate(new Date("2025-01-01"), new Date()),
     });
@@ -643,8 +700,8 @@ async function main() {
       title: `${game.name} ${province} Tournament #${i + 1}`,
       description: `${game.name} tournament for ${province} province players`,
       gameId: game.id,
-      entryFee: Math.random() * 3 + 0.5,
-      prizePool: Math.random() * 200 + 50,
+      entryFee: roundToCents(Math.random() * 3 + 0.5),
+      prizePool: roundToCents(Math.random() * 200 + 50),
       maxPlayers: [8, 16, 24, 32][Math.floor(Math.random() * 4)],
       status,
       province,
@@ -678,9 +735,9 @@ async function main() {
         data: {
           ...tournament,
           prizeBreakdown: {
-            first: Math.floor(tournament.prizePool * 0.6),
-            second: Math.floor(tournament.prizePool * 0.25),
-            third: Math.floor(tournament.prizePool * 0.15),
+            first: roundToCents(tournament.prizePool * 0.6),
+            second: roundToCents(tournament.prizePool * 0.25),
+            third: roundToCents(tournament.prizePool * 0.15),
           },
         },
       })
@@ -741,11 +798,11 @@ async function main() {
         prizeWon:
           tournament.status === TournamentStatus.COMPLETED
             ? index === 0
-              ? tournament.prizePool * 0.6
+              ? roundToCents(tournament.prizePool * 0.6)
               : index === 1
-              ? tournament.prizePool * 0.25
+              ? roundToCents(tournament.prizePool * 0.25)
               : index === 2
-              ? tournament.prizePool * 0.15
+              ? roundToCents(tournament.prizePool * 0.15)
               : 0
             : 0,
       });
