@@ -41,6 +41,8 @@ import {
   GroupedPaymentMethods,
   PaymentMethod,
   Currency,
+  TransactionDetails,
+  PaymentBody,
 } from "../types/pesepay";
 import { env } from "../config/environment";
 import logger from "../config/logger";
@@ -58,26 +60,144 @@ interface PaymentRequest {
   returnUrl?: string;
 }
 
-// PaymentBody interface as expected by pesepayclient
-interface PaymentBody {
-  amountDetails: {
-    amount: number;
-    currencyCode: string;
-    merchantAmount: number;
-    customerPayableAmount: number;
+// Helper function to validate critical TransactionDetails fields
+function validateTransactionDetails(
+  transactionDetails: TransactionDetails,
+  isInitiation: boolean = false
+): void {
+  const errors: string[] = [];
+
+  // Required fields validation based on PesePay specification
+  if (!transactionDetails.referenceNumber) {
+    errors.push("Missing required field: referenceNumber");
+  }
+
+  // transactionStatus is only required for status checks, not payment initiation
+  if (!isInitiation && !transactionDetails.transactionStatus) {
+    errors.push("Missing required field: transactionStatus");
+  }
+
+  // For payment initiation, we need either redirectUrl or pollUrl
+  if (isInitiation) {
+    if (!transactionDetails.redirectUrl && !transactionDetails.pollUrl) {
+      errors.push("Missing redirect URL or poll URL for payment initiation");
+    }
+  } else {
+    // For status checks with existing transaction status
+    const statusCategory = getTransactionStatusCategory(
+      transactionDetails.transactionStatus
+    );
+
+    if (statusCategory === "pending" || statusCategory === "success") {
+      if (
+        transactionDetails.redirectRequired &&
+        !transactionDetails.redirectUrl &&
+        !transactionDetails.pollUrl
+      ) {
+        errors.push(
+          "Missing redirect URL or poll URL for redirect-required payment method"
+        );
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(
+      `TransactionDetails validation failed: ${errors.join(", ")}`
+    );
+  }
+}
+
+// Helper function to categorize transaction status based on official PesePay transaction model
+export function getTransactionStatusCategory(
+  status: string
+): "success" | "pending" | "failed" {
+  const successStatuses = ["SUCCESS"];
+  const pendingStatuses = [
+    "INITIATED",
+    "PENDING",
+    "PROCESSING",
+    "PARTIALLY_PAID",
+  ];
+  const failureStatuses = [
+    "AUTHORIZATION_FAILED",
+    "DECLINED",
+    "ERROR",
+    "FAILED",
+    "INSUFFICIENT_FUNDS",
+    "CANCELLED",
+    "CLOSED",
+    "CLOSED_PERIOD_ELAPSED",
+    "SERVICE_UNAVAILABLE",
+    "TERMINATED",
+    "TIME_OUT",
+    "REVERSED",
+  ];
+
+  const upperStatus = status?.toUpperCase();
+
+  if (successStatuses.includes(upperStatus)) return "success";
+  if (pendingStatuses.includes(upperStatus)) return "pending";
+  if (failureStatuses.includes(upperStatus)) return "failed";
+
+  // Default to pending for unknown statuses
+  return "pending";
+}
+
+// Helper function to convert TransactionDetails to PaymentResponse
+function convertToPaymentResponse(
+  transactionDetails: TransactionDetails
+): PaymentResponse {
+  // Handle case where transactionStatus might not be present during initiation
+  const transactionStatus = transactionDetails.transactionStatus || "INITIATED";
+  const statusCategory = getTransactionStatusCategory(transactionStatus);
+
+  return {
+    success: statusCategory === "success" || statusCategory === "pending",
+    referenceNumber: transactionDetails.referenceNumber,
+    redirectUrl: transactionDetails.redirectUrl,
+    transactionStatus: transactionStatus,
+    message: transactionDetails.transactionStatusDescription,
+    isHostedCheckout: transactionDetails.redirectRequired || false,
+    redirectRequired: transactionDetails.redirectRequired || false,
+    pollUrl: transactionDetails.pollUrl,
+    paymentMethodDetails: transactionDetails.paymentMethodDetails
+      ? {
+          paymentMethodCode:
+            transactionDetails.paymentMethodDetails.paymentMethodCode,
+          paymentMethodName:
+            transactionDetails.paymentMethodDetails.paymentMethodName || "",
+          paymentMethodMessage:
+            transactionDetails.paymentMethodDetails.paymentMethodMessage || "",
+        }
+      : undefined,
   };
-  reasonForPayment: string;
-  resultUrl: string;
-  returnUrl: string;
-  merchantReference?: string;
-  paymentMethodCode?: string;
-  customer?: {
-    email: string;
-    phoneNumber: string;
-    name: string;
+}
+
+// Helper function to convert TransactionDetails to PaymentStatusResponse
+function convertToPaymentStatusResponse(
+  transactionDetails: TransactionDetails
+): PaymentStatusResponse {
+  const transactionStatus = transactionDetails.transactionStatus || "INITIATED";
+  const statusCategory = getTransactionStatusCategory(transactionStatus);
+
+  return {
+    success: statusCategory === "success" || statusCategory === "pending",
+    referenceNumber: transactionDetails.referenceNumber,
+    transactionStatus: transactionStatus,
+    message: transactionDetails.transactionStatusDescription,
+    amountDetails: transactionDetails.amountDetails
+      ? {
+          amount: transactionDetails.amountDetails.amount,
+          currencyCode: transactionDetails.amountDetails.currencyCode,
+        }
+      : undefined,
+    paidAt: transactionDetails.dateOfTransaction,
+    failureReason:
+      statusCategory === "failed"
+        ? transactionDetails.transactionStatusDescription
+        : undefined,
   };
-  paymentMethodRequiredFields?: any;
-  termsAndConditionsUrl?: string;
 }
 
 const ENCRYPTION_KEY = process.env.PESEPAY_ENCRYPTION_KEY || "";
@@ -147,6 +267,24 @@ export class PesePayService {
       });
 
       // ------------------------------------------------------------------
+      // 💰 Amount validation - PesePay typically requires m  inimum amounts
+      // ------------------------------------------------------------------
+      if (request.amount <= 0) {
+        throw new Error(
+          `Invalid payment amount: ${request.amount}. Amount must be greater than 0.`
+        );
+      }
+
+      if (request.amount < 5) {
+        logger.warn("Payment amount below recommended minimum", {
+          service: "nhandare-backend",
+          amount: request.amount,
+          recommendedMinimum: 5,
+        });
+        // We'll still try the payment but log a warning
+      }
+
+      // ------------------------------------------------------------------
       // 🛈  Phone number formatting – Pesepay accepts numbers without the
       //     leading "+".  We convert any "+263xxxxxxxxx" to "263xxxxxxxxx"
       //     and any "07xxxxxxxx" to "2637xxxxxxxx".
@@ -158,131 +296,161 @@ export class PesePayService {
         return cleaned; // fallback – send as-is
       })();
 
-      const paymentBody: PaymentBody = {
+      // Use minimal paymentBody structure as per pesepayclient documentation
+      const paymentBody: {
+        amountDetails: { amount: number; currencyCode: string };
+        reasonForPayment: string;
+        resultUrl: string;
+        returnUrl: string;
+        termsAndConditionsUrl?: string;
+      } = {
         amountDetails: {
           amount: request.amount,
-          currencyCode: "USD",
-          merchantAmount: request.amount,
-          customerPayableAmount: request.amount,
-        } as any,
+          currencyCode: "USD", // Note: USD is commonly used for gaming/tournaments in Zimbabwe
+        },
         reasonForPayment: "Gaming Platform Payment",
         resultUrl:
           request.resultUrl ||
           `${
-            process.env.FRONTEND_URL || "http://localhost:3000"
-          }/payment/result`,
+            process.env.FRONTEND_URL || "http://localhost:3001"
+          }/api/payments/webhook/pesepay`,
         returnUrl:
-          request.returnUrl ||
-          `${
-            process.env.FRONTEND_URL || "http://localhost:3000"
-          }/payment/return`,
-        merchantReference: `PAYMENT_${request.userId}_${Date.now()}`,
-        paymentMethodCode: request.paymentMethodCode,
-        customer: {
-          email: request.email,
-          phoneNumber: normalisedPhone,
-          name: request.customerName,
-        },
-        paymentMethodRequiredFields:
-          request.paymentMethodFields ||
-          (request.paymentMethodCode?.toUpperCase().startsWith("PZW21")
-            ? { customerPhoneNumber: normalisedPhone }
-            : {}),
+          request.returnUrl || `nhandare://payment/result?status=return`,
       };
 
-      // For card payments, add terms and conditions URL
-      if (request.isCardPayment) {
-        paymentBody.termsAndConditionsUrl = `${
-          process.env.FRONTEND_URL || "http://localhost:3000"
-        }/terms`;
-      }
+      // Note: Using minimal structure from pesepayclient documentation
+      // Removed: merchantReference, paymentMethodCode, customer, paymentMethodRequiredFields, termsAndConditionsUrl
 
-      logger.info("=== Using Direct PesePay API with Encryption ===", {
-        service: "nhandare-backend",
-        merchantReference: paymentBody.merchantReference,
-        paymentBody: {
-          amount: paymentBody.amountDetails.amount,
-          currencyCode: paymentBody.amountDetails.currencyCode,
-          paymentMethodCode: paymentBody.paymentMethodCode,
-          phoneNumber: paymentBody.customer?.phoneNumber,
-        },
-      });
-
-      // Use EncryptPayment from pesepayclient to encrypt the payload
-      const encryptedPayload = EncryptPayment(paymentBody, ENCRYPTION_KEY);
-
-      logger.info("Payload encrypted successfully", {
-        service: "nhandare-backend",
-        encryptedLength: encryptedPayload.length,
-      });
-
-      // Make direct HTTP request with our configured agent
-      const response = await axios.post(
-        `${API_BASE_URL}/v1/payments/initiate`,
-        { payload: encryptedPayload },
+      logger.info(
+        "=== Using pesepayclient InitiatePayment (Minimal Structure) ===",
         {
-          headers: {
-            "Content-Type": "application/json",
-            authorization: INTEGRATION_KEY,
+          service: "nhandare-backend",
+          paymentBody: {
+            amount: paymentBody.amountDetails.amount,
+            currencyCode: paymentBody.amountDetails.currencyCode,
+            reasonForPayment: paymentBody.reasonForPayment,
           },
-          httpsAgent: globalHttpsAgent,
-          timeout: 30000, // 30 second timeout
+          completePaymentBody: paymentBody,
         }
       );
 
-      logger.info("Direct API Response:", {
+      // Use InitiatePayment from pesepayclient package
+      logger.info("Calling pesepayclient InitiatePayment...", {
         service: "nhandare-backend",
-        status: response.status,
-        dataLength: JSON.stringify(response.data).length,
+        encryptionKeyLength: ENCRYPTION_KEY?.length,
+        integrationKeyLength: INTEGRATION_KEY?.length,
       });
 
-      // Decrypt the response using DecriptPayment from pesepayclient
-      const decryptedResponse = DecriptPayment(
-        response.data.payload,
-        ENCRYPTION_KEY
+      const transactionDetails = await InitiatePayment(
+        paymentBody,
+        ENCRYPTION_KEY,
+        INTEGRATION_KEY
       );
 
-      if (!decryptedResponse) {
-        throw new Error("Failed to decrypt PesePay response");
-      }
-
-      logger.info("Response decrypted successfully", {
+      logger.info("Raw response from pesepayclient:", {
         service: "nhandare-backend",
-        referenceNumber: decryptedResponse.referenceNumber,
-        transactionStatus: decryptedResponse.transactionStatus,
-        hasRedirectUrl: !!decryptedResponse.redirectUrl,
+        transactionDetails,
+        isNull: transactionDetails === null,
+        isUndefined: transactionDetails === undefined,
+        type: typeof transactionDetails,
       });
 
-      // Ensure we have required fields
-      if (!decryptedResponse.referenceNumber) {
-        logger.error("Missing referenceNumber in PesePay response", {
-          service: "nhandare-backend",
-          response: decryptedResponse,
-        });
-        throw new Error("Invalid payment response: missing referenceNumber");
+      if (!transactionDetails) {
+        logger.error(
+          "pesepayclient returned null/undefined - this indicates an error occurred",
+          {
+            service: "nhandare-backend",
+            paymentAmount: request.amount,
+            paymentMethodCode: request.paymentMethodCode,
+          }
+        );
+        throw new Error(
+          "Failed to initiate payment: pesepayclient returned null (likely due to validation error)"
+        );
       }
 
-      const paymentResponse: PaymentResponse = {
-        referenceNumber: decryptedResponse.referenceNumber,
-        transactionReference: decryptedResponse.referenceNumber, // For compatibility
-        redirectUrl: decryptedResponse.redirectUrl,
-        pollUrl: decryptedResponse.pollUrl,
-        transactionStatus: decryptedResponse.transactionStatus,
+      // Validate the transaction details structure for payment initiation
+      try {
+        validateTransactionDetails(transactionDetails, true);
+      } catch (validationError) {
+        logger.error("TransactionDetails validation failed:", {
+          service: "nhandare-backend",
+          validationError: validationError.message,
+          transactionDetails,
+        });
+        throw new Error(
+          `Invalid payment response from PesePay: ${validationError.message}`
+        );
+      }
+
+      logger.info("Payment initiated via pesepayclient:", {
+        service: "nhandare-backend",
+        referenceNumber: transactionDetails.referenceNumber,
+        transactionStatus: transactionDetails.transactionStatus || "INITIATED",
+        hasRedirectUrl: !!transactionDetails.redirectUrl,
         transactionStatusDescription:
-          decryptedResponse.transactionStatusDescription,
-        paymentMethodDetails: decryptedResponse.paymentMethodDetails,
-        redirectRequired: decryptedResponse.redirectRequired || false,
-        isHostedCheckout: request.isCardPayment || false,
-        // Include all other fields from the response
-        ...decryptedResponse,
-      };
+          transactionDetails.transactionStatusDescription,
+        fullResponse: transactionDetails,
+      });
+
+      // ------------------------------------------------------------------
+      // 🔍 Check payment status using official PesePay transaction model
+      // ------------------------------------------------------------------
+      const statusCategory = getTransactionStatusCategory(
+        transactionDetails.transactionStatus || "INITIATED"
+      );
+      const statusDescription =
+        transactionDetails.transactionStatusDescription?.toLowerCase();
+
+      // Check for explicit failure status or common error indicators
+      if (
+        statusCategory === "failed" ||
+        statusDescription?.includes("failed") ||
+        statusDescription?.includes("error") ||
+        statusDescription?.includes("invalid") ||
+        statusDescription?.includes("amount should be greater than zero")
+      ) {
+        logger.error("PesePay rejected the payment:", {
+          service: "nhandare-backend",
+          transactionStatus: transactionDetails.transactionStatus,
+          statusCategory,
+          statusDescription: transactionDetails.transactionStatusDescription,
+          amount: request.amount,
+          paymentMethodCode: request.paymentMethodCode,
+          fullResponse: transactionDetails,
+        });
+        throw new Error(
+          `Payment rejected by PesePay: ${
+            transactionDetails.transactionStatusDescription ||
+            transactionDetails.transactionStatus
+          }`
+        );
+      }
+
+      // Also check if redirectUrl is missing when it should be present
+      if (!transactionDetails.redirectUrl && !transactionDetails.pollUrl) {
+        logger.warn(
+          "PesePay response missing redirect/poll URL - possible issue:",
+          {
+            service: "nhandare-backend",
+            transactionStatus: transactionDetails.transactionStatus,
+            statusDescription: transactionDetails.transactionStatusDescription,
+            fullResponse: transactionDetails,
+          }
+        );
+      }
+
+      const paymentResponse = convertToPaymentResponse(transactionDetails);
 
       logger.info("Final Payment Response:", {
         service: "nhandare-backend",
-        success: true,
+        success: paymentResponse.success,
         referenceNumber: paymentResponse.referenceNumber,
         hasRedirectUrl: !!paymentResponse.redirectUrl,
         transactionStatus: paymentResponse.transactionStatus,
+        statusCategory,
+        redirectRequired: transactionDetails.redirectRequired,
+        hasPollUrl: !!transactionDetails.pollUrl,
       });
 
       return paymentResponse;
@@ -325,108 +493,117 @@ export class PesePayService {
         referenceNumber,
       });
 
-      // ------------------------------------------------------------------
-      // 🛈  Primary approach – use pesepayclient's CheckPayment which
-      //     handles encryption/decryption and abstracts the HTTP call.
-      // ------------------------------------------------------------------
-      try {
-        const statusResponse = await CheckPayment(
-          referenceNumber,
-          ENCRYPTION_KEY,
-          INTEGRATION_KEY
-        );
-
-        if (statusResponse) {
-          logger.info("Payment Status (via CheckPayment):", {
-            service: "nhandare-backend",
-            transactionStatus: statusResponse.transactionStatus,
-          });
-          return statusResponse;
-        }
-
-        // If null/undefined fall through to fallback.
-        logger.warn("CheckPayment returned null, falling back to direct API", {
-          service: "nhandare-backend",
-          referenceNumber,
-        });
-      } catch (libErr: any) {
-        // Library failed – log and fall back
-        logger.warn("CheckPayment threw error, falling back", {
-          service: "nhandare-backend",
-          message: libErr?.message,
-        });
-      }
-
-      // ------------------------------------------------------------------
-      // 🛈  Fallback – direct HTTPS request (legacy). This path is kept to
-      //     ensure backward-compatibility if the library fails.
-      // ------------------------------------------------------------------
-      const response = await axios.get(
-        `${API_BASE_URL}/v1/payments/check-payment?referenceNumber=${encodeURIComponent(
-          referenceNumber
-        )}`,
-        {
-          headers: {
-            "Content-Type": "application/json",
-            authorization: INTEGRATION_KEY,
-          },
-          httpsAgent: globalHttpsAgent,
-          timeout: 30000, // 30 second timeout
-        }
-      );
-
-      logger.info("Direct Payment Status Response:", {
+      // Use CheckPayment from pesepayclient package
+      logger.info("Calling CheckPayment from pesepayclient...", {
         service: "nhandare-backend",
-        status: response.status,
-        dataLength: JSON.stringify(response.data).length,
+        referenceNumber,
+        encryptionKeyLength: ENCRYPTION_KEY.length,
+        integrationKeyLength: INTEGRATION_KEY.length,
       });
 
-      // Decrypt the response using DecriptPayment from pesepayclient
-      const decryptedResponse = DecriptPayment(
-        response.data.payload,
-        ENCRYPTION_KEY
+      const transactionDetails = await CheckPayment(
+        referenceNumber,
+        ENCRYPTION_KEY,
+        INTEGRATION_KEY
       );
 
-      if (!decryptedResponse) {
-        throw new Error("Failed to decrypt PesePay status response");
-      }
-
-      logger.info("Payment Status Response (fallback):", {
+      logger.info("Raw CheckPayment response:", {
         service: "nhandare-backend",
-        success: !!decryptedResponse,
-        transactionStatus: decryptedResponse?.transactionStatus,
+        referenceNumber,
+        transactionDetails,
+        isNull: transactionDetails === null,
+        isUndefined: transactionDetails === undefined,
+        type: typeof transactionDetails,
       });
 
-      return decryptedResponse;
-    } catch (error) {
-      // --------------------------------------------------------------
-      // Graceful handling: Pesepay often returns 404 or 500 with
-      // "transaction was not found" while the transaction is still
-      // pending (e.g., user hasn't approved the EcoCash prompt yet).
-      // See error payload examples in logs.  We'll treat these cases
-      // as a temporary "PENDING" status instead of bubbling an error.
-      // --------------------------------------------------------------
-      const axiosErr = error as any;
-      const msg: string | undefined = axiosErr?.response?.data?.message;
-      const statusCode: number | undefined = axiosErr?.response?.status;
-
-      const notFound = msg?.toLowerCase().includes("not found");
-
-      if (notFound || statusCode === 404) {
+      if (!transactionDetails) {
+        // If CheckPayment returns null, treat as not found yet (common for pending payments)
         logger.info("Payment status not found yet – treating as PENDING", {
           service: "nhandare-backend",
           referenceNumber,
         });
 
         return {
+          success: true,
           referenceNumber,
           transactionStatus: "PENDING",
-          message: msg,
-          success: true,
-        } as PaymentStatusResponse;
+          message: "Payment status not available yet",
+        };
       }
 
+      // Validate the transaction details structure
+      try {
+        validateTransactionDetails(transactionDetails);
+      } catch (validationError) {
+        logger.error("Payment status validation failed:", {
+          service: "nhandare-backend",
+          referenceNumber,
+          validationError: validationError.message,
+          transactionDetails,
+        });
+        throw new Error(
+          `Invalid payment status response from PesePay: ${validationError.message}`
+        );
+      }
+
+      const statusCategory = getTransactionStatusCategory(
+        transactionDetails.transactionStatus
+      );
+
+      logger.info("Payment Status Retrieved Successfully:", {
+        service: "nhandare-backend",
+        referenceNumber,
+        transactionStatus: transactionDetails.transactionStatus,
+        statusCategory,
+      });
+
+      return convertToPaymentStatusResponse(transactionDetails);
+    } catch (error) {
+      // --------------------------------------------------------------
+      // Graceful handling: Pesepay often returns 404 or 500 with
+      // "transaction was not found" while the transaction is still
+      // pending (e.g., user hasn't approved the EcoCash prompt yet).
+      // We'll treat these cases as a temporary "PENDING" status.
+      // --------------------------------------------------------------
+      const axiosErr = error as any;
+      const msg: string | undefined =
+        axiosErr?.response?.data?.message || axiosErr?.message;
+      const statusCode: number | undefined = axiosErr?.response?.status;
+
+      const notFound =
+        msg?.toLowerCase().includes("not found") ||
+        msg?.toLowerCase().includes("transaction does not exist") ||
+        statusCode === 404;
+
+      if (notFound) {
+        logger.info("Payment status not found yet – treating as PENDING", {
+          service: "nhandare-backend",
+          referenceNumber,
+          error: msg,
+        });
+
+        return {
+          success: true,
+          referenceNumber,
+          transactionStatus: "PENDING",
+          message: msg || "Payment status not available yet",
+        };
+      }
+
+      // For other errors, log and re-throw
       this.logApiError("Payment Status Check", error);
+      logger.error("Payment Status Check Detailed Error:", {
+        service: "nhandare-backend",
+        referenceNumber,
+        error: {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+          response: error.response?.data,
+          status: error.response?.status,
+        },
+      });
+
       throw error;
     }
   }

@@ -609,6 +609,30 @@ router.put(
       return;
     }
 
+    // Transform numeric fields to proper types
+    if (updateData.entryFee !== undefined) {
+      updateData.entryFee = roundToCents(updateData.entryFee);
+    }
+    if (updateData.prizePool !== undefined) {
+      updateData.prizePool = roundToCents(updateData.prizePool);
+    }
+
+    // Transform date fields to Date objects
+    if (updateData.startDate) {
+      updateData.startDate = new Date(updateData.startDate);
+    }
+    if (updateData.endDate) {
+      updateData.endDate = updateData.endDate
+        ? new Date(updateData.endDate)
+        : null;
+    }
+    if (updateData.registrationStart) {
+      updateData.registrationStart = new Date(updateData.registrationStart);
+    }
+    if (updateData.registrationEnd) {
+      updateData.registrationEnd = new Date(updateData.registrationEnd);
+    }
+
     const updatedTournament = await prisma.tournament.update({
       where: { id },
       data: updateData,

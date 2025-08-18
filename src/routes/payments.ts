@@ -306,13 +306,7 @@ router.post(
   validateSchema(schemas.initiatePayment),
   async (req: Request, res: Response) => {
     try {
-      const {
-        tournamentId,
-        paymentMethodCode,
-        mobileMoneyNumber,
-        returnUrl,
-        resultUrl,
-      } = req.body;
+      const { tournamentId, returnUrl, resultUrl } = req.body;
       const userId = req.user?.id;
 
       if (!userId) {
@@ -397,32 +391,33 @@ router.post(
           metadata: {
             tournamentName: tournament.title,
             gameName: tournament.game.name,
-            paymentMethodCode,
-            mobileMoneyNumber,
           },
         },
       });
 
-      // Initiate payment with Pesepay
+      // Prepare return URLs
+      const finalReturnUrl =
+        returnUrl ||
+        `nhandare://payment/result?tournamentId=${tournamentId}&status=return`;
+      const finalResultUrl =
+        resultUrl ||
+        `http://localhost:${env.PORT}/api/payments/webhook/pesepay`;
+
+      // URLs configured for PesePay integration
+
+      // Initiate payment with Pesepay (hosted checkout - minimal payload)
       const paymentResponse = await pesePayService.initiatePayment({
         amount: tournament.entryFee,
         userId,
         email: user.email,
-        phoneNumber: mobileMoneyNumber || "",
+        phoneNumber: "",
         customerName:
           `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
           user.username,
-        paymentMethodCode,
-        isCardPayment:
-          paymentMethodCode.toUpperCase().includes("CARD") ||
-          paymentMethodCode.toUpperCase().includes("VISA") ||
-          paymentMethodCode.toUpperCase().includes("MASTERCARD"),
-        returnUrl:
-          returnUrl ||
-          `nhandare://payments/return?tournamentId=${tournamentId}`,
-        resultUrl:
-          resultUrl ||
-          `http://localhost:${env.PORT}/api/payments/webhook/pesepay`,
+        paymentMethodCode: "",
+        isCardPayment: false,
+        returnUrl: finalReturnUrl,
+        resultUrl: finalResultUrl,
       });
 
       // Persist PesePay reference & extra metadata so later polling can locate this payment
@@ -475,6 +470,15 @@ router.get(
   async (req: Request, res: Response) => {
     try {
       const { referenceNumber } = req.params;
+
+      // DEBUG LOG: Track all status check requests
+      logger.info("🔍 PAYMENT STATUS CHECK REQUEST RECEIVED", {
+        service: "nhandare-backend",
+        referenceNumber,
+        userId: req.user?.id,
+        timestamp: new Date().toISOString(),
+        userAgent: req.headers["user-agent"],
+      });
 
       // Disable caching for payment status checks to ensure real-time updates
       res.set({

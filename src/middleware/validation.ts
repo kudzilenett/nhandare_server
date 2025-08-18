@@ -233,7 +233,7 @@ export const schemas = {
     maxPrize: joi.number().min(0).optional(),
   }),
 
-  // Payment schemas for Zimbabwe/Pesepay integration
+  // Payment schemas for Zimbabwe/Pesepay integration (simplified for hosted checkout)
   initiatePayment: joi.object({
     // Accept UUID or CUID/ULID style ids (20+ chars alphanumeric with - or _)
     tournamentId: joi
@@ -244,17 +244,7 @@ export const schemas = {
         "any.required": "Tournament ID is required",
         "string.pattern.base": "Tournament ID is invalid",
       }),
-    paymentMethodCode: joi.string().required().messages({
-      "any.required": "Payment method is required",
-    }),
-    mobileMoneyNumber: joi
-      .string()
-      .pattern(/^(\+263|263|07)[0-9]{8,9}$/)
-      .optional()
-      .messages({
-        "string.pattern.base":
-          "Mobile money number must be a valid Zimbabwe number (e.g., +263771234567)",
-      }),
+    // PesePay handles payment method selection and phone input in hosted checkout
     returnUrl: joi.string().uri().optional(),
     resultUrl: joi.string().uri().optional(),
   }),

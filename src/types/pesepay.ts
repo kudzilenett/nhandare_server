@@ -13,23 +13,112 @@ export interface PaymentRequest {
   returnUrl?: string;
 }
 
+// PaymentBody interface as expected by pesepayclient InitiatePayment function
 export interface PaymentBody {
   amountDetails: {
     amount: number;
     currencyCode: string;
   };
-  merchantReference: string;
   reasonForPayment: string;
-  paymentMethodCode: string;
-  customer: {
+  resultUrl: string;
+  returnUrl: string;
+  merchantReference?: string;
+  paymentMethodCode?: string;
+  customer?: {
     email: string;
     phoneNumber: string;
     name: string;
   };
   paymentMethodRequiredFields?: Record<string, any>;
-  resultUrl: string;
-  returnUrl: string;
   termsAndConditionsUrl?: string;
+}
+
+// TransactionDetails interface from pesepayclient package
+// Note: Some fields may be optional or undefined depending on the payment stage/status
+export interface TransactionDetails {
+  amountDetails?: {
+    amount: number;
+    currencyCode: string;
+    customerPayableAmount?: number;
+    defaultCurrencyAmount?: number;
+    defaultCurrencyCode?: string;
+    formattedMerchantAmount?: string;
+    merchantAmount?: number;
+    totalTransactionAmount?: number;
+    transactionServiceFee?: number;
+  };
+  applicationCode?: string;
+  applicationName?: string;
+  chargeType?:
+    | "NO_CHARGE"
+    | "SHARED_TRANSACTIONAL_CHARGE"
+    | "TRANSACTIONAL_CHARGE_FOR_CUSTOMER"
+    | "TRANSACTIONAL_CHARGE_FOR_MERCHANT"
+    | string;
+  customer?: {
+    contactNumbers?: string[];
+    email?: string;
+    name?: string;
+  };
+  customerAmountPaid?: {
+    amountPaid: number;
+    currencyCode: string;
+  };
+  dateOfTransaction?: string;
+  id?: number;
+  internalReference?: string;
+  liquidationStatus?:
+    | "COMPLETED"
+    | "DUE_FOR_LIQUIDATION"
+    | "IN_PROGRESS"
+    | "NO_LIQUIDATION_REQUIRED"
+    | "PENDING"
+    | "WAITING_FOR_DETERMINATION"
+    | string;
+  liquidationTransactionReference?: string;
+  localDateTimeOfTransaction?: string;
+  merchantReference?: string;
+  paymentMetadata?: Record<string, any>;
+  paymentMethodDetails?: {
+    paymentMethodCode: string;
+    paymentMethodId?: number;
+    paymentMethodMessage?: string;
+    paymentMethodName: string;
+    paymentMethodReference?: string;
+    paymentMethodStatus?: string;
+  };
+  pollUrl?: string;
+  reasonForPayment?: string;
+  redirectRequired?: boolean;
+  redirectUrl?: string;
+  referenceNumber: string; // This should always be present
+  resultUrl?: string;
+  returnUrl?: string;
+  settlementMode?: "DIRECTLY_SETTLED" | string; // Note: Official docs show this as string despite description mentioning boolean
+  timeOfTransaction?: string;
+  transactionDate?: string;
+  transactionStatus?:
+    | "AUTHORIZATION_FAILED"
+    | "CANCELLED"
+    | "CLOSED"
+    | "CLOSED_PERIOD_ELAPSED"
+    | "DECLINED"
+    | "ERROR"
+    | "FAILED"
+    | "INITIATED"
+    | "INSUFFICIENT_FUNDS"
+    | "PARTIALLY_PAID"
+    | "PENDING"
+    | "PROCESSING"
+    | "REVERSED"
+    | "SERVICE_UNAVAILABLE"
+    | "SUCCESS"
+    | "TERMINATED"
+    | "TIME_OUT"
+    | string;
+  transactionStatusCode?: number;
+  transactionStatusDescription?: string;
+  transactionType?: "BASIC" | "INVOICE" | string;
 }
 
 export interface PaymentMethod {
@@ -42,44 +131,37 @@ export interface PaymentMethod {
   requiredFields?: string[];
 }
 
+// PaymentResponse - simplified response for internal use
 export interface PaymentResponse {
-  // Pesepay standard response fields
-  success?: boolean;
-  message?: string;
-  transactionId?: string;
-  referenceNumber?: string;
-  paymentUrl?: string;
-  status?: string;
-  isHostedCheckout?: boolean;
-  pollUrl?: string;
+  success: boolean;
+  referenceNumber: string;
   redirectUrl?: string;
+  transactionStatus: string;
+  message?: string;
+  isHostedCheckout?: boolean;
+  redirectRequired?: boolean;
 
-  // Additional fields from Pesepay API
-  amountDetails?: any;
-  customer?: any;
-  merchant?: any;
-  paymentMethod?: any;
-  transactionReference?: string;
-  resultUrl?: string;
-  returnUrl?: string;
-  transactionStatus?: string;
-
-  // Allow any additional fields from Pesepay
-  [key: string]: any;
+  // Additional useful fields from TransactionDetails
+  pollUrl?: string;
+  paymentMethodDetails?: {
+    paymentMethodCode: string;
+    paymentMethodName: string;
+    paymentMethodMessage: string;
+  };
 }
 
+// PaymentStatusResponse - simplified status response
 export interface PaymentStatusResponse {
-  success?: boolean;
-  status?: string;
-  transactionId?: string;
-  referenceNumber?: string;
-  amount?: number;
-  currencyCode?: string;
+  success: boolean;
+  referenceNumber: string;
+  transactionStatus: string;
+  message?: string;
+  amountDetails?: {
+    amount: number;
+    currencyCode: string;
+  };
   paidAt?: string;
   failureReason?: string;
-
-  // Allow any additional fields from Pesepay status response
-  [key: string]: any;
 }
 
 export interface GroupedPaymentMethods {
