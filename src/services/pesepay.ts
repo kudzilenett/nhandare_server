@@ -314,8 +314,7 @@ export class PesePayService {
           `${
             process.env.FRONTEND_URL || "http://localhost:3001"
           }/api/payments/webhook/pesepay`,
-        returnUrl:
-          request.returnUrl || `nhandare://payment/result?status=return`,
+        returnUrl: request.returnUrl || "about:blank", // No redirect back to app
       };
 
       // Note: Using minimal structure from pesepayclient documentation

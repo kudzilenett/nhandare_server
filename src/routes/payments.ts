@@ -395,10 +395,8 @@ router.post(
         },
       });
 
-      // Prepare return URLs
-      const finalReturnUrl =
-        returnUrl ||
-        `nhandare://payment/result?tournamentId=${tournamentId}&status=return`;
+      // Prepare return URLs - Using in-app browser, no redirect needed
+      const finalReturnUrl = returnUrl || undefined;
       const finalResultUrl =
         resultUrl ||
         `http://localhost:${env.PORT}/api/payments/webhook/pesepay`;
