@@ -101,26 +101,36 @@ async function processPaymentStatusUpdate(
       return;
     }
 
-    // 3. Persist update
+    // 3. Persist update with enhanced metadata capture
+    const updateData: any = {
+      status: mappedStatus,
+      pesePayReference: reference,
+      paymentConfirmedAt: mappedStatus === "COMPLETED" ? new Date() : undefined,
+      paymentFailedAt: mappedStatus === "FAILED" ? new Date() : undefined,
+      failureReason:
+        mappedStatus === "FAILED"
+          ? extraMetadata?.message || "Payment failed"
+          : undefined,
+      metadata: {
+        ...(payment.metadata as any),
+        statusPolledAt: new Date().toISOString(),
+        lastRawStatus: rawStatus,
+        ...extraMetadata,
+      },
+    };
+
+    // Update payment method code if we got it from webhook and don't already have it
+    if (
+      extraMetadata.paymentMethodDetails?.paymentMethodCode &&
+      !payment.paymentMethodCode
+    ) {
+      updateData.paymentMethodCode =
+        extraMetadata.paymentMethodDetails.paymentMethodCode;
+    }
+
     await prisma.payment.update({
       where: { id: payment.id },
-      data: {
-        status: mappedStatus,
-        pesePayReference: reference,
-        paymentConfirmedAt:
-          mappedStatus === "COMPLETED" ? new Date() : undefined,
-        paymentFailedAt: mappedStatus === "FAILED" ? new Date() : undefined,
-        failureReason:
-          mappedStatus === "FAILED"
-            ? extraMetadata?.message || "Payment failed"
-            : undefined,
-        metadata: {
-          ...(payment.metadata as any),
-          statusPolledAt: new Date().toISOString(),
-          lastRawStatus: rawStatus,
-          ...extraMetadata,
-        },
-      },
+      data: updateData,
     });
 
     // 4. Emit socket update so frontend gets real-time update even when using polling
@@ -420,15 +430,23 @@ router.post(
 
       // Persist PesePay reference & extra metadata so later polling can locate this payment
       try {
+        // Extract payment method details if available from initiation response
+        const paymentMethodCode =
+          paymentResponse.paymentMethodDetails?.paymentMethodCode;
+
         await prisma.payment.update({
           where: { id: payment.id },
           data: {
             pesePayReference: paymentResponse.referenceNumber,
+            paymentMethodCode: paymentMethodCode || null, // Store in dedicated column if available
             metadata: {
               ...(payment.metadata as any),
               pesepayReference: paymentResponse.referenceNumber,
               pollUrl: paymentResponse.pollUrl,
               redirectUrl: paymentResponse.redirectUrl,
+              // Store full payment method details in metadata for future reference
+              paymentMethodDetails:
+                paymentResponse.paymentMethodDetails || null,
             },
           },
         });
@@ -505,10 +523,34 @@ router.get(
         statusResponse
       );
 
+      // Fetch payment record to include stored payment method details
+      const payment = await prisma.payment.findFirst({
+        where: {
+          OR: [
+            { pesePayReference: referenceNumber },
+            {
+              metadata: { path: ["pesepayReference"], equals: referenceNumber },
+            },
+          ],
+        },
+        select: {
+          paymentMethodCode: true,
+          metadata: true,
+        },
+      });
+
+      // Enhance response with payment method details from our database
+      const metadata = payment?.metadata as any;
+      const enhancedResponse = {
+        ...statusResponse,
+        paymentMethodDetails: metadata?.paymentMethodDetails || null,
+        paymentMethodCode: payment?.paymentMethodCode || null,
+      };
+
       res.json({
         success: true,
         message: "Payment status fetched successfully",
-        data: statusResponse,
+        data: enhancedResponse,
       });
     } catch (error) {
       const errorMessage =
@@ -595,6 +637,7 @@ router.post("/webhook/pesepay", async (req: Request, res: Response) => {
       currencyCode,
       resultUrl,
       reasonForPayment,
+      paymentMethodDetails, // Extract payment method details if provided
     } = webhookData;
 
     const reference = referenceNumber || transactionReference;
@@ -611,6 +654,9 @@ router.post("/webhook/pesepay", async (req: Request, res: Response) => {
     await processPaymentStatusUpdate(reference, transactionStatus, {
       message: reasonForPayment,
       failureReason: reasonForPayment,
+      // Pass full webhook data to capture payment method details
+      fullWebhookData: webhookData,
+      paymentMethodDetails: paymentMethodDetails || null,
     });
 
     res.json({

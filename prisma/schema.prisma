@@ -74,6 +74,7 @@ model User {
   chatMessages    TournamentChatMessage[]
   challengesSent  ChallengeInvitation[]   @relation("Challenger")
   challengesReceived ChallengeInvitation[] @relation("Challenged")
+  queueEntries    MatchmakingQueue[]
 
   @@map("users")
 }
@@ -550,4 +551,46 @@ model TournamentChatMessage {
 
   @@index([tournamentId])
   @@map("tournament_chat_messages")
+}
+
+// Matchmaking Queue Table for Skill-Based Matching
+model MatchmakingQueue {
+  id       String @id @default(cuid())
+  userId   String
+  gameType String
+  rating   Int
+  joinedAt DateTime @default(now())
+  status   String   @default("waiting") // waiting, matched, cancelled
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Indexes for efficient skill-based matching
+  @@index([gameType, rating, joinedAt], name: "idx_queue_skill_matching")
+  @@index([gameType, status], name: "idx_queue_status")
+  @@index([userId], name: "idx_queue_user")
+  @@map("matchmaking_queue")
+}
+
+// Basic Matchmaking Analytics (Zimbabwe Scale)
+model MatchmakingMetrics {
+  id              String   @id @default(cuid())
+  gameType        String
+  date            DateTime @default(now())
+  
+  // Wait time statistics  
+  averageWaitTime Int      // seconds
+  totalMatches    Int      @default(0)
+  aiMatches       Int      @default(0) // fallback to AI
+  humanMatches    Int      @default(0) // successful human matches
+  
+  // Match quality
+  averageRatingDifference Int? // for human matches
+  
+  // Peak usage tracking
+  peakConcurrentUsers Int @default(0)
+  
+  @@unique([gameType, date], name: "gameType_date")
+  @@index([gameType, date], name: "idx_metrics_game_date")
+  @@map("matchmaking_metrics")
 }

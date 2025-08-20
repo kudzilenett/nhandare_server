@@ -5,6 +5,7 @@ import { env } from "../config/environment";
 import logger, { logSecurity } from "../config/logger";
 import { prisma } from "../config/database";
 import { updatePlayerStatistics } from "../routes/matches";
+import ChessAI from "../services/ChessAI";
 
 interface SocketUser {
   id: string;
@@ -350,6 +351,9 @@ export const initializeSocket = (io: SocketServer) => {
         };
 
         socket.emit("joined-game-room", { matchId, gameRoom, gameState });
+
+        // Check if it's AI's turn to move (for initial state or when human reconnects)
+        await checkInitialAIMove(matchId);
       } catch (error) {
         logger.error("Error joining game room", {
           error,
@@ -448,6 +452,9 @@ export const initializeSocket = (io: SocketServer) => {
             move,
             gameState: updatedMatch.gameData,
           });
+
+          // Check if opponent is AI and trigger AI move
+          await triggerAIMoveIfNeeded(matchId, socket.user.id);
         } catch (error) {
           logger.error("Error making move", { error, userId: socket.user?.id });
           socket.emit("error", { message: "Failed to make move" });
@@ -990,6 +997,39 @@ export const initializeSocket = (io: SocketServer) => {
     });
 
     // Handle disconnection
+    // Matchmaking events
+    socket.on("join-matchmaking-queue", async (data: { gameType: string }) => {
+      if (!socket.user) return;
+
+      try {
+        const { gameType } = data;
+        socket.join(`matchmaking:${gameType}`);
+
+        logger.info("User joined matchmaking queue room", {
+          userId: socket.user.id,
+          gameType,
+        });
+      } catch (error) {
+        logger.error("Failed to join matchmaking queue room", { error });
+      }
+    });
+
+    socket.on("leave-matchmaking-queue", async (data: { gameType: string }) => {
+      if (!socket.user) return;
+
+      try {
+        const { gameType } = data;
+        socket.leave(`matchmaking:${gameType}`);
+
+        logger.info("User left matchmaking queue room", {
+          userId: socket.user.id,
+          gameType,
+        });
+      } catch (error) {
+        logger.error("Failed to leave matchmaking queue room", { error });
+      }
+    });
+
     socket.on("disconnect", async (reason) => {
       logger.info("User disconnected from socket", {
         userId: socket.user?.id,
@@ -1055,3 +1095,171 @@ export const initializeSocket = (io: SocketServer) => {
 
   logger.info("Socket.io server initialized");
 };
+
+/**
+ * Check if the next player to move is AI and trigger AI move
+ */
+async function triggerAIMoveIfNeeded(matchId: string, humanPlayerId: string) {
+  try {
+    // Get match details with player info
+    const match = await prisma.match.findUnique({
+      where: { id: matchId },
+      include: {
+        player1: { select: { id: true, username: true } },
+        player2: { select: { id: true, username: true } },
+      },
+    });
+
+    if (!match || match.status !== "ACTIVE") {
+      return;
+    }
+
+    // Determine which player should move next
+    const currentGameData = match.gameData as any;
+    const lastMoveBy = currentGameData?.lastMoveBy;
+
+    // If human just moved, it's the opponent's turn
+    let nextPlayerId: string;
+    if (lastMoveBy === match.player1Id) {
+      nextPlayerId = match.player2Id;
+    } else {
+      nextPlayerId = match.player1Id;
+    }
+
+    // Check if next player is AI
+    const nextPlayer =
+      nextPlayerId === match.player1Id ? match.player1 : match.player2;
+    if (nextPlayer.username !== "ai_player") {
+      return; // Next player is human, no AI move needed
+    }
+
+    logger.info("Triggering AI move", { matchId, aiPlayerId: nextPlayerId });
+
+    // Schedule AI move with delay
+    const ai = new ChessAI("easy");
+    const delay = ai.getMoveDelay();
+
+    setTimeout(async () => {
+      await makeAIMove(matchId, nextPlayerId);
+    }, delay);
+  } catch (error) {
+    logger.error("Error checking for AI move", { error, matchId });
+  }
+}
+
+/**
+ * Make an AI move for the specified player
+ */
+async function makeAIMove(matchId: string, aiPlayerId: string) {
+  try {
+    // Get current match state
+    const match = await prisma.match.findUnique({
+      where: { id: matchId },
+      select: {
+        id: true,
+        status: true,
+        gameData: true,
+        player1Id: true,
+        player2Id: true,
+      },
+    });
+
+    if (!match || match.status !== "ACTIVE") {
+      return;
+    }
+
+    const currentGameData = match.gameData as any;
+    const currentFen =
+      currentGameData?.fen ||
+      "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    // Calculate AI move
+    const ai = new ChessAI("easy");
+    const aiMove = ai.calculateMove(currentFen);
+
+    if (!aiMove) {
+      logger.warn("AI could not calculate move", { matchId, fen: currentFen });
+      return;
+    }
+
+    // Validate the AI move
+    const validation = validateChessMove(currentFen, aiMove);
+    if (!validation.isValid) {
+      logger.error("AI generated invalid move", {
+        matchId,
+        move: aiMove,
+        error: validation.error,
+      });
+      return;
+    }
+
+    // Update match with AI move
+    const updatedMatch = await prisma.match.update({
+      where: { id: matchId },
+      data: {
+        gameData: {
+          ...(match.gameData as any),
+          lastMove: aiMove,
+          lastMoveBy: aiPlayerId,
+          lastMoveAt: new Date().toISOString(),
+          fen: validation.newFen,
+        },
+      },
+    });
+
+    // Broadcast AI move to all players in the room
+    if (ioInstance) {
+      ioInstance.to(`match:${matchId}`).emit("move-made", {
+        matchId,
+        move: aiMove,
+        gameState: updatedMatch.gameData,
+        playerId: aiPlayerId,
+        timestamp: new Date().toISOString(),
+        isAIMove: true,
+      });
+    }
+
+    logger.info("AI move made", {
+      matchId,
+      aiPlayerId,
+      move: JSON.stringify(aiMove),
+    });
+  } catch (error) {
+    logger.error("Error making AI move", { error, matchId, aiPlayerId });
+  }
+}
+
+/**
+ * Check if AI should make the first move when game starts
+ */
+async function checkInitialAIMove(matchId: string) {
+  try {
+    const match = await prisma.match.findUnique({
+      where: { id: matchId },
+      include: {
+        player1: { select: { id: true, username: true } },
+        player2: { select: { id: true, username: true } },
+      },
+    });
+
+    if (!match || match.status !== "ACTIVE") {
+      return;
+    }
+
+    const currentGameData = match.gameData as any;
+    const hasAnyMoves = currentGameData?.lastMoveBy;
+
+    // If no moves have been made yet and player1 (white) is AI, make first move
+    if (!hasAnyMoves && match.player1.username === "ai_player") {
+      logger.info("AI is white, making first move", { matchId });
+      const ai = new ChessAI("easy");
+      const delay = ai.getMoveDelay();
+
+      setTimeout(async () => {
+        await makeAIMove(matchId, match.player1Id);
+      }, delay);
+    }
+  } catch (error) {
+    logger.error("Error checking initial AI move", { error, matchId });
+  }
+}

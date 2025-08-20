@@ -36,6 +36,10 @@ import matchmakingRoutes from "./routes/matchmaking";
 // Import socket handlers
 import { initializeSocket } from "./socket";
 
+// Import background services
+import MatchmakingBackgroundJob from "./services/MatchmakingBackgroundJob";
+import SkillBasedMatchmakingService from "./services/SkillBasedMatchmakingService";
+
 // Create Express app
 const app = express();
 const server = createServer(app);
@@ -148,6 +152,10 @@ const gracefulShutdown = async (signal: string) => {
   logger.info(`${signal} received. Starting graceful shutdown...`);
 
   try {
+    // Stop background jobs
+    MatchmakingBackgroundJob.stop();
+    logger.info("Background jobs stopped");
+
     // Close server first
     server.close(() => {
       logger.info("HTTP server closed");
@@ -210,6 +218,12 @@ async function startServer() {
         console.log(`   GET  http://localhost:${env.PORT}/api/tournaments`);
         console.log(`   GET  http://localhost:${env.PORT}/api/leaderboard`);
       }
+
+      // Start matchmaking background job (5 second intervals)
+      MatchmakingBackgroundJob.setSocketIO(io);
+      SkillBasedMatchmakingService.setSocketIO(io);
+      MatchmakingBackgroundJob.start();
+      logger.info("Matchmaking background job started with WebSocket support");
 
       // Start periodic tournament completion check
       setInterval(async () => {

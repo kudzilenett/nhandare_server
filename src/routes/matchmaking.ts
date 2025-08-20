@@ -1,7 +1,9 @@
 import { Router, Request, Response } from "express";
 import { authenticate } from "../middleware/auth";
 import { asyncHandler } from "../middleware/errorHandler";
-import MatchmakingQueue from "../services/MatchmakingQueue";
+import MatchmakingQueue from "../services/MatchmakingQueue"; // Keep for backward compatibility
+import SkillBasedMatchmakingService from "../services/SkillBasedMatchmakingService";
+import MatchmakingBackgroundJob from "../services/MatchmakingBackgroundJob";
 import { prisma } from "../config/database";
 import { v4 as uuidv4 } from "uuid";
 import logger from "../config/logger";
@@ -16,7 +18,7 @@ router.post(
     const { gameType = "chess" } = req.body as { gameType: string };
     const userId = req.user!.id;
 
-    // If the user already has an active match of this type, return it immediately
+    // Check for existing active match, but validate it has proper game sessions
     const existingMatch = await prisma.match.findFirst({
       where: {
         game: {
@@ -25,56 +27,95 @@ router.post(
         status: "ACTIVE",
         OR: [{ player1Id: userId }, { player2Id: userId }],
       },
-      select: { id: true, player1Id: true, player2Id: true },
+      select: {
+        id: true,
+        player1Id: true,
+        player2Id: true,
+        sessions: {
+          where: { isActive: true },
+          select: { userId: true },
+        },
+      },
     });
 
     if (existingMatch) {
-      const colorForRequester: "white" | "black" =
-        existingMatch.player1Id === userId ? "white" : "black";
+      // Validate that both players have active game sessions
+      const hasValidSessions =
+        existingMatch.sessions.length === 2 &&
+        existingMatch.sessions.some(
+          (s) => s.userId === existingMatch.player1Id
+        ) &&
+        existingMatch.sessions.some(
+          (s) => s.userId === existingMatch.player2Id
+        );
+
+      if (hasValidSessions) {
+        const colorForRequester: "white" | "black" =
+          existingMatch.player1Id === userId ? "white" : "black";
+
+        return res.json({
+          success: true,
+          data: { matchId: existingMatch.id, color: colorForRequester },
+        });
+      } else {
+        // Clean up invalid match
+        await prisma.match.update({
+          where: { id: existingMatch.id },
+          data: { status: "CANCELLED" },
+        });
+
+        // Deactivate any orphaned game sessions
+        await prisma.gameSession.updateMany({
+          where: { matchId: existingMatch.id, isActive: true },
+          data: { isActive: false },
+        });
+      }
+    }
+
+    // Use new skill-based matching service
+    const matchResult = await SkillBasedMatchmakingService.findMatch(
+      userId,
+      gameType
+    );
+
+    if (matchResult.matchId) {
+      // Match found (either human or AI)
+      const message = matchResult.isAiMatch
+        ? "No opponents available. Starting AI match."
+        : "Match found! Game starting...";
 
       return res.json({
         success: true,
-        data: { matchId: existingMatch.id, color: colorForRequester },
+        data: {
+          matchId: matchResult.matchId,
+          color: matchResult.color,
+        },
+        message,
       });
     }
 
-    // Try to find opponent in queue
-    const opponentPlayer = MatchmakingQueue.popOpponent(gameType, userId);
-
-    // If no opponent found, check if user is already queued
-    if (!opponentPlayer) {
-      const existing = MatchmakingQueue.findPlayer(gameType, userId);
-
-      if (existing) {
-        // Already queued – return same ticketId
-        return res.status(202).json({
-          success: true,
-          message: "Queued for matchmaking",
-          data: { ticketId: existing.ticketId },
-        });
-      }
-
-      // Not queued yet – enqueue now and return ticket
-      const ticketId = MatchmakingQueue.addPlayer(gameType, userId, () => {});
+    if (matchResult.queueTicket) {
+      // User added to queue, return queue status
       return res.status(202).json({
         success: true,
         message: "Queued for matchmaking",
-        data: { ticketId },
+        data: {
+          ticketId: matchResult.queueTicket.id,
+          position: matchResult.queueTicket.position,
+          estimatedWaitTime: matchResult.queueTicket.estimatedWaitTime,
+          totalInQueue: matchResult.queueTicket.totalInQueue,
+        },
       });
     }
 
-    // Opponent found, create match
-    const matchId = await createMatchRecord(
-      gameType,
-      opponentPlayer.userId,
-      userId
-    );
-
-    // Assign colors: first in queue = white, second = black
-    opponentPlayer.resolve(matchId, "white");
-    const colorForRequester: "white" | "black" = "black";
-
-    res.json({ success: true, data: { matchId, color: colorForRequester } });
+    // Fallback: create AI match if something went wrong
+    const userRating = await getUserRating(userId, gameType);
+    const matchId = await createMatchRecord(gameType, userId, null, userRating);
+    return res.json({
+      success: true,
+      data: { matchId, color: "white" },
+      message: "No opponents available. Starting AI match.",
+    });
   })
 );
 
@@ -362,8 +403,165 @@ router.delete(
   authenticate,
   asyncHandler(async (req: Request, res: Response) => {
     const { ticketId } = req.params;
+    const { gameType } = req.query as { gameType?: string };
+    const userId = req.user!.id;
+
+    // Use new skill-based service to leave queue
+    await SkillBasedMatchmakingService.leaveQueue(userId, gameType);
+
+    // Legacy support: also remove from old queue
     MatchmakingQueue.removeByTicket(ticketId);
+
+    logger.info("Matchmaking cancelled", {
+      service: "skill-based-matchmaking",
+      userId,
+      gameType,
+      ticketId,
+    });
+
     res.json({ success: true, message: "Matchmaking cancelled" });
+  })
+);
+
+// Get queue status
+router.get(
+  "/queue-status/:gameType",
+  authenticate,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { gameType } = req.params;
+    const userId = req.user!.id;
+
+    const queueStatus = await SkillBasedMatchmakingService.getQueueStatus(
+      userId,
+      gameType
+    );
+
+    res.json({
+      success: true,
+      data: queueStatus,
+    });
+  })
+);
+
+// Get matchmaking analytics (Zimbabwe focused)
+router.get(
+  "/analytics",
+  authenticate,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { gameType, days = 7 } = req.query as {
+      gameType?: string;
+      days?: string;
+    };
+
+    try {
+      // Calculate date range
+      const daysCount = Math.min(parseInt(days as string) || 7, 30); // Max 30 days
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - daysCount);
+      startDate.setHours(0, 0, 0, 0);
+
+      // Base query conditions
+      const whereClause: any = {
+        date: { gte: startDate },
+      };
+      if (gameType) {
+        whereClause.gameType = gameType;
+      }
+
+      // Get recent metrics
+      const metrics = await prisma.matchmakingMetrics.findMany({
+        where: whereClause,
+        orderBy: { date: "desc" },
+      });
+
+      // Calculate aggregated stats
+      const stats = metrics.reduce(
+        (acc, metric) => {
+          acc.totalMatches += metric.totalMatches;
+          acc.humanMatches += metric.humanMatches;
+          acc.aiMatches += metric.aiMatches;
+          acc.totalWaitTime += metric.averageWaitTime * metric.totalMatches;
+          acc.peakUsers = Math.max(acc.peakUsers, metric.peakConcurrentUsers);
+
+          if (metric.averageRatingDifference) {
+            acc.ratingDiffSum +=
+              metric.averageRatingDifference * metric.humanMatches;
+            acc.ratingDiffCount += metric.humanMatches;
+          }
+
+          return acc;
+        },
+        {
+          totalMatches: 0,
+          humanMatches: 0,
+          aiMatches: 0,
+          totalWaitTime: 0,
+          peakUsers: 0,
+          ratingDiffSum: 0,
+          ratingDiffCount: 0,
+        }
+      );
+
+      // Calculate percentages and averages
+      const analytics = {
+        period: {
+          days: daysCount,
+          startDate: startDate.toISOString(),
+          endDate: new Date().toISOString(),
+        },
+        matches: {
+          total: stats.totalMatches,
+          human: stats.humanMatches,
+          ai: stats.aiMatches,
+          humanPercentage:
+            stats.totalMatches > 0
+              ? Math.round((stats.humanMatches / stats.totalMatches) * 100)
+              : 0,
+          aiPercentage:
+            stats.totalMatches > 0
+              ? Math.round((stats.aiMatches / stats.totalMatches) * 100)
+              : 0,
+        },
+        performance: {
+          averageWaitTime:
+            stats.totalMatches > 0
+              ? Math.round(stats.totalWaitTime / stats.totalMatches)
+              : 0,
+          averageRatingDifference:
+            stats.ratingDiffCount > 0
+              ? Math.round(stats.ratingDiffSum / stats.ratingDiffCount)
+              : null,
+          peakConcurrentUsers: stats.peakUsers,
+        },
+        daily: metrics.map((m) => ({
+          date: m.date.toISOString().split("T")[0],
+          gameType: m.gameType,
+          totalMatches: m.totalMatches,
+          humanMatches: m.humanMatches,
+          aiMatches: m.aiMatches,
+          averageWaitTime: m.averageWaitTime,
+          averageRatingDifference: m.averageRatingDifference,
+        })),
+      };
+
+      // Get current queue statistics
+      const currentQueue = await MatchmakingBackgroundJob.getQueueStats();
+
+      res.json({
+        success: true,
+        data: {
+          analytics,
+          currentQueue,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (error) {
+      logger.error("Failed to fetch matchmaking analytics", { error });
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch analytics data",
+      });
+    }
   })
 );
 
@@ -389,11 +587,15 @@ router.get(
     const [generalPresenceSessions, activeGameSessions, totalUsers] =
       await Promise.all([
         // Users with general presence sessions (CASUAL type, no specific match)
+        // Exclude AI players from online count
         prisma.gameSession.count({
           where: {
             isActive: true,
             sessionType: "CASUAL",
             matchId: null,
+            user: {
+              username: { not: "ai_player" },
+            },
           },
         }),
         // Users currently in active games (RANKED/TOURNAMENT type with matches)
@@ -435,11 +637,15 @@ router.get(
 
     if (includeList) {
       // Get list of online users (those with general presence)
+      // Exclude AI players from the list
       const sessions = await prisma.gameSession.findMany({
         where: {
           isActive: true,
           sessionType: "CASUAL",
           matchId: null,
+          user: {
+            username: { not: "ai_player" },
+          },
         },
         include: {
           user: {
@@ -491,90 +697,6 @@ router.get(
     res.json({ success: true, data: { sessions: activeMatches } });
   })
 );
-
-async function createMatchRecord(
-  gameType: string,
-  player1Id: string,
-  player2Id: string | null
-): Promise<string> {
-  // Fetch game record
-  const game = await prisma.game.findFirst({
-    where: { name: { equals: gameType, mode: "insensitive" } },
-    select: { id: true },
-  });
-  if (!game) {
-    throw new Error("Game type not found");
-  }
-
-  if (!player2Id) {
-    // AI match: create a GameSession only
-    const session = await prisma.gameSession.create({
-      data: {
-        userId: player1Id,
-        gameId: game.id,
-        sessionType: "PRACTICE",
-        isActive: true,
-      },
-      select: { id: true },
-    });
-    return session.id;
-  }
-
-  // Multiplayer match
-  const match = await prisma.match.create({
-    data: {
-      player1Id,
-      player2Id,
-      gameId: game.id,
-      status: "ACTIVE",
-    },
-    select: { id: true },
-  });
-
-  // Transition players from general presence to in-game sessions
-  await Promise.all([
-    // Deactivate general presence sessions for both players
-    prisma.gameSession.updateMany({
-      where: {
-        userId: player1Id,
-        isActive: true,
-        sessionType: "CASUAL",
-        matchId: null,
-      },
-      data: { isActive: false },
-    }),
-    prisma.gameSession.updateMany({
-      where: {
-        userId: player2Id,
-        isActive: true,
-        sessionType: "CASUAL",
-        matchId: null,
-      },
-      data: { isActive: false },
-    }),
-    // Create new in-game sessions
-    prisma.gameSession.create({
-      data: {
-        userId: player1Id,
-        gameId: game.id,
-        sessionType: "RANKED",
-        matchId: match.id,
-        isActive: true,
-      },
-    }),
-    prisma.gameSession.create({
-      data: {
-        userId: player2Id,
-        gameId: game.id,
-        sessionType: "RANKED",
-        matchId: match.id,
-        isActive: true,
-      },
-    }),
-  ]);
-
-  return match.id;
-}
 
 // Helper function to create challenge invitation
 async function createChallengeInvitation(
@@ -685,6 +807,102 @@ async function acceptChallengeInvitation(
   ]);
 
   return match.id;
+}
+
+// Helper function to create match record with smart AI difficulty
+async function createMatchRecord(
+  gameType: string,
+  player1Id: string,
+  player2Id: string | null,
+  userRating?: number
+): Promise<string> {
+  const game = await prisma.game.findUnique({
+    where: { name: gameType },
+    select: { id: true },
+  });
+
+  if (!game) {
+    throw new Error(`Game ${gameType} not found`);
+  }
+
+  // Determine AI difficulty based on player rating (smart difficulty)
+  let gameData = {};
+  if (!player2Id && userRating) {
+    let aiDifficulty: string;
+    if (userRating < 1300) {
+      aiDifficulty = "easy";
+    } else if (userRating < 1600) {
+      aiDifficulty = "medium";
+    } else {
+      aiDifficulty = "hard";
+    }
+
+    gameData = {
+      aiDifficulty,
+      isAiMatch: true,
+      playerRating: userRating,
+    };
+
+    logger.info("AI match configured with smart difficulty", {
+      service: "nhandare-backend",
+      gameType,
+      userRating,
+      aiDifficulty,
+    });
+  }
+
+  const match = await prisma.match.create({
+    data: {
+      player1Id,
+      player2Id: player2Id || "ai_player", // AI player
+      gameId: game.id,
+      status: "ACTIVE",
+      gameData: gameData as any,
+    },
+  });
+
+  logger.info("Match created", {
+    service: "nhandare-backend",
+    matchId: match.id,
+    player1Id,
+    player2Id: player2Id || "ai_player",
+    gameType,
+    isAiMatch: !player2Id,
+  });
+
+  return match.id;
+}
+
+// Helper function to get user's rating for a game
+async function getUserRating(
+  userId: string,
+  gameType: string
+): Promise<number> {
+  try {
+    const game = await prisma.game.findUnique({
+      where: { name: gameType },
+      select: { id: true },
+    });
+
+    if (!game) {
+      return 1200; // Default rating
+    }
+
+    const stats = await prisma.gameStatistic.findUnique({
+      where: {
+        userId_gameId: {
+          userId,
+          gameId: game.id,
+        },
+      },
+      select: { currentRating: true },
+    });
+
+    return stats?.currentRating || 1200;
+  } catch (error) {
+    logger.error("Failed to get user rating", { error, userId, gameType });
+    return 1200;
+  }
 }
 
 export default router;

@@ -556,7 +556,18 @@ export class PesePayService {
         statusCategory,
       });
 
-      return convertToPaymentStatusResponse(transactionDetails);
+      const statusResponse = convertToPaymentStatusResponse(transactionDetails);
+
+      // Log if we receive paymentMethodDetails in status check (rare but possible)
+      if (transactionDetails.paymentMethodDetails) {
+        logger.info("PaymentMethodDetails found in status check:", {
+          service: "nhandare-backend",
+          referenceNumber,
+          paymentMethodDetails: transactionDetails.paymentMethodDetails,
+        });
+      }
+
+      return statusResponse;
     } catch (error) {
       // --------------------------------------------------------------
       // Graceful handling: Pesepay often returns 404 or 500 with
