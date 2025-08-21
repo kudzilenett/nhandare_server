@@ -75,6 +75,15 @@ model User {
   challengesSent  ChallengeInvitation[]   @relation("Challenger")
   challengesReceived ChallengeInvitation[] @relation("Challenged")
   queueEntries    MatchmakingQueue[]
+  tournamentEvents TournamentEvent[] @relation("UserTournamentEvents")
+  tournamentHighlights TournamentHighlight[] @relation("UserTournamentHighlights")
+  tournamentSpectators TournamentSpectator[] @relation("UserTournamentSpectators")
+  userActivities UserActivity[] @relation("UserActivities")
+  flaggedContents FlaggedContent[] @relation("ContentReporter")
+  flaggedContentsModerated FlaggedContent[] @relation("ContentModerator")
+  userModerations UserModeration[] @relation("ModeratedUser")
+  userModerationsIssued UserModeration[] @relation("Moderator")
+  auditLogs AuditLog[] @relation("UserAuditLogs")
 
   @@map("users")
 }
@@ -163,6 +172,9 @@ model Tournament {
   matches      Match[]
   payments     Payment[]
   chatMessages TournamentChatMessage[]
+  tournamentEvents TournamentEvent[] @relation("TournamentEvents")
+  tournamentHighlights TournamentHighlight[] @relation("TournamentHighlights")
+  tournamentSpectators TournamentSpectator[] @relation("TournamentSpectators")
 
   @@map("tournaments")
 }
@@ -593,4 +605,131 @@ model MatchmakingMetrics {
   @@unique([gameType, date], name: "gameType_date")
   @@index([gameType, date], name: "idx_metrics_game_date")
   @@map("matchmaking_metrics")
+}
+
+// Tournament Social Features
+model TournamentEvent {
+  id            String   @id @default(cuid())
+  tournamentId  String
+  userId        String
+  type          String   // player_joined, match_result, round_advanced, achievement, highlight
+  message       String
+  metadata      Json?    // Additional data like opponent, score, etc.
+  createdAt     DateTime @default(now())
+
+  // Relations
+  tournament Tournament @relation("TournamentEvents", fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User       @relation("UserTournamentEvents", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("tournament_events")
+}
+
+model TournamentHighlight {
+  id            String   @id @default(cuid())
+  tournamentId  String
+  userId        String
+  achievement   String
+  description   String
+  createdAt     DateTime @default(now())
+
+  // Relations
+  tournament Tournament @relation("TournamentHighlights", fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User       @relation("UserTournamentHighlights", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("tournament_highlights")
+}
+
+model TournamentSpectator {
+  id            String   @id @default(cuid())
+  tournamentId  String
+  userId        String
+  joinedAt      DateTime @default(now())
+  leftAt        DateTime?
+  isActive      Boolean  @default(true)
+
+  // Relations
+  tournament Tournament @relation("TournamentSpectators", fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User       @relation("UserTournamentSpectators", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, userId])
+  @@map("tournament_spectators")
+}
+
+// User Activity Tracking
+model UserActivity {
+  id            String   @id @default(cuid())
+  userId        String
+  activityType  String   // login, logout, game_played, tournament_joined, payment_made, profile_updated
+  description   String
+  ipAddress     String?
+  userAgent     String?
+  metadata      Json?    // Additional context data
+  createdAt     DateTime @default(now())
+
+  // Relations
+  user User @relation("UserActivities", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_activities")
+}
+
+// Content Moderation
+model FlaggedContent {
+  id            String   @id @default(cuid())
+  contentType   String   // message, profile, tournament_description
+  contentId     String   // ID of the flagged content
+  reporterId    String   // User who reported the content
+  reason        String   // inappropriate_content, spam, offensive_language, etc.
+  severity      String   // low, medium, high
+  status        String   // pending, reviewed, approved, rejected
+  moderatorId   String?  // Admin who reviewed it
+  reviewedAt    DateTime?
+  notes         String?  // Moderator notes
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  reporter  User  @relation("ContentReporter", fields: [reporterId], references: [id])
+  moderator User? @relation("ContentModerator", fields: [moderatorId], references: [id])
+
+  @@map("flagged_content")
+}
+
+model UserModeration {
+  id            String   @id @default(cuid())
+  userId        String
+  moderatorId   String
+  action        String   // warn, suspend, ban
+  reason        String
+  duration      Int?     // Duration in days (null for permanent)
+  expiresAt     DateTime?
+  isActive      Boolean  @default(true)
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  user      User @relation("ModeratedUser", fields: [userId], references: [id])
+  moderator User @relation("Moderator", fields: [moderatorId], references: [id])
+
+  @@map("user_moderations")
+}
+
+// Audit Trail for Payments and Admin Actions
+model AuditLog {
+  id            String   @id @default(cuid())
+  userId        String?  // User who performed the action
+  targetType    String   // payment, user, tournament, etc.
+  targetId      String   // ID of the target
+  action        String   // created, updated, deleted, status_changed
+  previousValue Json?    // Previous state
+  newValue      Json?    // New state
+  reason        String?  // Why the action was taken
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime @default(now())
+
+  // Relations
+  user User? @relation("UserAuditLogs", fields: [userId], references: [id])
+
+  @@map("audit_logs")
 }

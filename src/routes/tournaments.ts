@@ -344,6 +344,22 @@ router.post(
       return;
     }
 
+    // CRITICAL FIX: Check if tournament requires payment
+    if (tournament.entryFee > 0) {
+      res.status(400).json({
+        success: false,
+        message:
+          "Payment required. Use /api/payments/initiate-tournament-entry",
+        data: {
+          entryFee: tournament.entryFee,
+          currency: tournament.localCurrency || "USD",
+          requiresPayment: true,
+          paymentEndpoint: "/api/payments/initiate-tournament-entry",
+        },
+      });
+      return;
+    }
+
     // Check if user is already registered
     const existingRegistration = await prisma.tournamentPlayer.findUnique({
       where: {
@@ -362,7 +378,7 @@ router.post(
       return;
     }
 
-    // Create tournament player registration
+    // Create tournament player registration (only for free tournaments)
     const tournamentPlayer = await prisma.tournamentPlayer.create({
       data: {
         userId,
@@ -951,6 +967,1167 @@ router.post(
         message: "Failed to test tournament completion",
         error: error instanceof Error ? error.message : "Unknown error",
       });
+    }
+  })
+);
+
+// POST /api/tournaments/:id/start - Start tournament manually (admin only)
+router.post(
+  "/:id/start",
+  authenticate,
+  adminOnly,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    const tournament = await prisma.tournament.findUnique({
+      where: { id },
+      include: { _count: { select: { players: true } } },
+    });
+
+    if (!tournament) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found",
+      });
+    }
+
+    if (tournament.status !== "CLOSED") {
+      return res.status(400).json({
+        success: false,
+        message: "Tournament must be in CLOSED status to start",
+      });
+    }
+
+    if (tournament._count.players < 2) {
+      return res.status(400).json({
+        success: false,
+        message: "Minimum 2 players required to start tournament",
+      });
+    }
+
+    try {
+      const { TournamentStatusService } = await import(
+        "../services/TournamentStatusService"
+      );
+
+      await TournamentStatusService.startTournament(id);
+
+      res.json({
+        success: true,
+        message: "Tournament started successfully",
+        data: { tournamentId: id },
+      });
+    } catch (error) {
+      logger.error("Error starting tournament", {
+        tournamentId: id,
+        adminId: req.user!.id,
+        error,
+      });
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to start tournament",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// POST /api/tournaments/:id/bracket/generate - Generate bracket (admin only)
+router.post(
+  "/:id/bracket/generate",
+  authenticate,
+  adminOnly,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    try {
+      const { BracketGenerationService } = await import(
+        "../services/BracketGenerationService"
+      );
+      const bracket = await BracketGenerationService.generateBracket(id);
+
+      const updatedTournament = await prisma.tournament.findUnique({
+        where: { id },
+        include: {
+          players: { include: { user: true } },
+          matches: { include: { player1: true, player2: true } },
+        },
+      });
+
+      res.json({
+        success: true,
+        message: "Bracket generated successfully",
+        data: {
+          tournament: updatedTournament,
+          bracket,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to generate bracket",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// GET /api/tournaments/:id/status - Get tournament status and transition info
+router.get(
+  "/:id/status",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    try {
+      const { TournamentStatusService } = await import(
+        "../services/TournamentStatusService"
+      );
+
+      const transitions =
+        await TournamentStatusService.getTournamentsNeedingTransitions();
+
+      const tournament = await prisma.tournament.findUnique({
+        where: { id },
+        include: {
+          _count: { select: { players: true } },
+          players: { include: { user: true } },
+        },
+      });
+
+      if (!tournament) {
+        return res.status(404).json({
+          success: false,
+          message: "Tournament not found",
+        });
+      }
+
+      res.json({
+        success: true,
+        message: "Tournament status retrieved successfully",
+        data: {
+          tournament,
+          systemStatus: {
+            transitions,
+            lastChecked: new Date().toISOString(),
+          },
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to get tournament status",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// POST /api/tournaments/:id/matches/:matchId/result - Update match result
+router.post(
+  "/:id/matches/:matchId/result",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: tournamentId, matchId } = req.params;
+    const { winnerId, result, duration, metadata } = req.body;
+
+    try {
+      const { TournamentMatchService } = await import(
+        "../services/TournamentMatchService"
+      );
+
+      await TournamentMatchService.updateMatchResult(matchId, {
+        winnerId,
+        result,
+        duration,
+        metadata,
+      });
+
+      res.json({
+        success: true,
+        message: "Match result updated successfully",
+        data: { matchId, winnerId },
+      });
+    } catch (error) {
+      logger.error("Error updating match result", {
+        tournamentId,
+        matchId,
+        error,
+      });
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to update match result",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// GET /api/tournaments/:id/matches - Get tournament matches
+router.get(
+  "/:id/matches",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: tournamentId } = req.params;
+
+    try {
+      const { TournamentMatchService } = await import(
+        "../services/TournamentMatchService"
+      );
+
+      const matches = await TournamentMatchService.getTournamentMatches(
+        tournamentId
+      );
+      const progress = await TournamentMatchService.getTournamentProgress(
+        tournamentId
+      );
+
+      res.json({
+        success: true,
+        message: "Tournament matches retrieved successfully",
+        data: {
+          matches,
+          progress,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve tournament matches",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// GET /api/tournaments/:id/progress - Get tournament progress
+router.get(
+  "/:id/progress",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: tournamentId } = req.params;
+
+    try {
+      const { TournamentMatchService } = await import(
+        "../services/TournamentMatchService"
+      );
+
+      const progress = await TournamentMatchService.getTournamentProgress(
+        tournamentId
+      );
+
+      res.json({
+        success: true,
+        message: "Tournament progress retrieved successfully",
+        data: progress,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve tournament progress",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// 🇿🇼 ZIMBABWE-SPECIFIC TOURNAMENT ENDPOINTS
+
+// POST /api/tournaments/zimbabwe/create - Create Zimbabwe-specific tournament
+router.post(
+  "/zimbabwe/create",
+  authenticate,
+  adminOnly,
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const { ZimbabweTournamentService } = await import(
+        "../services/ZimbabweTournamentService"
+      );
+
+      const tournament =
+        await ZimbabweTournamentService.createZimbabweTournament(req.body);
+
+      res.json({
+        success: true,
+        message: "Zimbabwe tournament created successfully",
+        data: { tournament },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to create Zimbabwe tournament",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// POST /api/tournaments/zimbabwe/university/create - Create inter-university tournament
+router.post(
+  "/zimbabwe/university/create",
+  authenticate,
+  adminOnly,
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const { ZimbabweTournamentService } = await import(
+        "../services/ZimbabweTournamentService"
+      );
+
+      const tournament =
+        await ZimbabweTournamentService.createInterUniversityTournament(
+          req.body
+        );
+
+      res.json({
+        success: true,
+        message: "Inter-university tournament created successfully",
+        data: { tournament },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to create inter-university tournament",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// POST /api/tournaments/zimbabwe/regional/create - Create regional tournament
+router.post(
+  "/zimbabwe/regional/create",
+  authenticate,
+  adminOnly,
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const { ZimbabweTournamentService } = await import(
+        "../services/ZimbabweTournamentService"
+      );
+
+      const tournament =
+        await ZimbabweTournamentService.createRegionalTournament(req.body);
+
+      res.json({
+        success: true,
+        message: "Regional tournament created successfully",
+        data: { tournament },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to create regional tournament",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// GET /api/tournaments/zimbabwe/region - Get tournaments by Zimbabwe region
+router.get(
+  "/zimbabwe/region",
+  authenticate,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { province, city, radius } = req.query;
+
+    try {
+      const { ZimbabweTournamentService } = await import(
+        "../services/ZimbabweTournamentService"
+      );
+
+      const tournaments =
+        await ZimbabweTournamentService.getTournamentsByRegion(
+          province as string,
+          city as string,
+          radius ? Number(radius) : undefined
+        );
+
+      res.json({
+        success: true,
+        message: "Regional tournaments retrieved successfully",
+        data: { tournaments },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve regional tournaments",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// GET /api/tournaments/zimbabwe/university - Get university tournaments
+router.get(
+  "/zimbabwe/university",
+  authenticate,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { institutionId } = req.query;
+
+    try {
+      const { ZimbabweTournamentService } = await import(
+        "../services/ZimbabweTournamentService"
+      );
+
+      const tournaments =
+        await ZimbabweTournamentService.getUniversityTournaments(
+          institutionId as string
+        );
+
+      res.json({
+        success: true,
+        message: "University tournaments retrieved successfully",
+        data: { tournaments },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve university tournaments",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// GET /api/tournaments/zimbabwe/corporate - Get corporate tournaments
+router.get(
+  "/zimbabwe/corporate",
+  authenticate,
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const { ZimbabweTournamentService } = await import(
+        "../services/ZimbabweTournamentService"
+      );
+
+      const tournaments =
+        await ZimbabweTournamentService.getCorporateTournaments();
+
+      res.json({
+        success: true,
+        message: "Corporate tournaments retrieved successfully",
+        data: { tournaments },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve corporate tournaments",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// GET /api/tournaments/zimbabwe/stats - Get Zimbabwe tournament statistics
+router.get(
+  "/zimbabwe/stats",
+  authenticate,
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const { ZimbabweTournamentService } = await import(
+        "../services/ZimbabweTournamentService"
+      );
+
+      const stats =
+        await ZimbabweTournamentService.getZimbabweTournamentStats();
+
+      res.json({
+        success: true,
+        message: "Zimbabwe tournament statistics retrieved successfully",
+        data: stats,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve Zimbabwe tournament statistics",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// 🕐 ZIMBABWE SCHEDULING ENDPOINTS
+
+// GET /api/tournaments/zimbabwe/schedule/suggest - Get optimal tournament times
+router.get(
+  "/zimbabwe/schedule/suggest",
+  authenticate,
+  asyncHandler(async (req: Request, res: Response) => {
+    const {
+      province,
+      city,
+      targetAudience,
+      preferredTime,
+      maxDuration,
+      isWeekend,
+    } = req.query;
+
+    try {
+      const { ZimbabweSchedulingService } = await import(
+        "../services/ZimbabweSchedulingService"
+      );
+
+      const suggestions =
+        await ZimbabweSchedulingService.suggestOptimalTournamentTime({
+          province: province as string,
+          city: city as string,
+          targetAudience: targetAudience as
+            | "university"
+            | "corporate"
+            | "public",
+          preferredTime: preferredTime as
+            | "morning"
+            | "afternoon"
+            | "evening"
+            | "night",
+          maxDuration: maxDuration ? Number(maxDuration) : undefined,
+          isWeekend: isWeekend === "true",
+        });
+
+      res.json({
+        success: true,
+        message: "Optimal tournament times suggested successfully",
+        data: { suggestions },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to suggest optimal tournament times",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// 📱 OFFLINE TOURNAMENT ENDPOINTS
+
+// POST /api/tournaments/:id/offline/cache - Cache tournament for offline play
+router.post(
+  "/:id/offline/cache",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: tournamentId } = req.params;
+    const userId = (req as any).user.id;
+
+    try {
+      const { OfflineTournamentService } = await import(
+        "../services/OfflineTournamentService"
+      );
+
+      const offlineData =
+        await OfflineTournamentService.cacheTournamentForOffline(
+          tournamentId,
+          userId
+        );
+
+      res.json({
+        success: true,
+        message: "Tournament cached for offline play successfully",
+        data: { offlineData },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to cache tournament for offline play",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// POST /api/tournaments/:id/offline/sync - Sync offline tournament results
+router.post(
+  "/:id/offline/sync",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: tournamentId } = req.params;
+    const { offlineResults } = req.body;
+    const userId = (req as any).user.id;
+
+    try {
+      const { OfflineTournamentService } = await import(
+        "../services/OfflineTournamentService"
+      );
+
+      const syncResult = await OfflineTournamentService.syncOfflineResults(
+        tournamentId,
+        userId,
+        offlineResults
+      );
+
+      res.json({
+        success: true,
+        message: "Offline results synced successfully",
+        data: { syncResult },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to sync offline results",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// GET /api/tournaments/:id/offline/can-play - Check if tournament can be played offline
+router.get(
+  "/:id/offline/can-play",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: tournamentId } = req.params;
+    const userId = (req as any).user.id;
+
+    try {
+      const { OfflineTournamentService } = await import(
+        "../services/OfflineTournamentService"
+      );
+
+      const offlineCapability = await OfflineTournamentService.canPlayOffline(
+        tournamentId,
+        userId
+      );
+
+      res.json({
+        success: true,
+        message: "Offline capability checked successfully",
+        data: { offlineCapability },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to check offline capability",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// GET /api/tournaments/offline/recommendations - Get offline play recommendations
+router.get(
+  "/offline/recommendations",
+  authenticate,
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const { OfflineTournamentService } = await import(
+        "../services/OfflineTournamentService"
+      );
+
+      const recommendations =
+        OfflineTournamentService.getOfflinePlayRecommendations();
+
+      res.json({
+        success: true,
+        message: "Offline play recommendations retrieved successfully",
+        data: { recommendations },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve offline play recommendations",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// 🏭 PHASE 4: INDUSTRY-STANDARD TOURNAMENT FEATURES
+
+// GET /api/tournaments/:id/swiss-standings - Get Swiss system standings
+router.get(
+  "/:id/swiss-standings",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: tournamentId } = req.params;
+
+    try {
+      const { SwissSystemService } = await import(
+        "../services/SwissSystemService"
+      );
+
+      const standings = await SwissSystemService.getSwissStandings(
+        tournamentId
+      );
+
+      res.json({
+        success: true,
+        message: "Swiss system standings retrieved successfully",
+        data: standings,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve Swiss system standings",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// POST /api/tournaments/:id/swiss-round - Generate next Swiss round
+router.post(
+  "/:id/swiss-round",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: tournamentId } = req.params;
+    const { roundNumber } = req.body;
+
+    if (!roundNumber || typeof roundNumber !== "number") {
+      return res.status(400).json({
+        success: false,
+        message: "Round number is required",
+      });
+    }
+
+    try {
+      const { SwissSystemService } = await import(
+        "../services/SwissSystemService"
+      );
+
+      const round = await SwissSystemService.generateSwissRound(
+        tournamentId,
+        roundNumber
+      );
+
+      res.json({
+        success: true,
+        message: "Swiss round generated successfully",
+        data: round,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to generate Swiss round",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// GET /api/tournaments/:id/ratings - Get tournament player ratings
+router.get(
+  "/:id/ratings",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: tournamentId } = req.params;
+
+    try {
+      const { RatingService } = await import("../services/RatingService");
+
+      const seeding = await RatingService.calculateTournamentSeeding(
+        tournamentId
+      );
+
+      res.json({
+        success: true,
+        message: "Tournament ratings retrieved successfully",
+        data: seeding,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve tournament ratings",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// POST /api/tournaments/:id/update-ratings - Update ratings after tournament
+router.post(
+  "/:id/update-ratings",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: tournamentId } = req.params;
+
+    try {
+      const { RatingService } = await import("../services/RatingService");
+
+      await RatingService.updateTournamentRatings(tournamentId);
+
+      res.json({
+        success: true,
+        message: "Tournament ratings updated successfully",
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to update tournament ratings",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// GET /api/tournaments/:id/anti-cheat - Analyze tournament for cheating
+router.get(
+  "/:id/anti-cheat",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: tournamentId } = req.params;
+
+    try {
+      const { AntiCheatService } = await import("../services/AntiCheatService");
+
+      // Get all matches in the tournament
+      const matches = await prisma.match.findMany({
+        where: { tournamentId, status: "COMPLETED" },
+        select: { id: true },
+      });
+
+      const results = [];
+      for (const match of matches) {
+        const matchResults = await AntiCheatService.analyzeMatch(match.id);
+        results.push(...matchResults);
+      }
+
+      res.json({
+        success: true,
+        message: "Anti-cheat analysis completed successfully",
+        data: results,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to complete anti-cheat analysis",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// GET /api/players/:id/behavior - Get player behavior analysis
+router.get(
+  "/players/:id/behavior",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: userId } = req.params;
+
+    try {
+      const { AntiCheatService } = await import("../services/AntiCheatService");
+
+      const behavior = await AntiCheatService.getPlayerBehaviorAnalysis(userId);
+
+      res.json({
+        success: true,
+        message: "Player behavior analysis retrieved successfully",
+        data: behavior,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve player behavior analysis",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// GET /api/games/:id/rating-distribution - Get rating distribution for a game
+router.get(
+  "/games/:id/rating-distribution",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: gameId } = req.params;
+
+    try {
+      const { RatingService } = await import("../services/RatingService");
+
+      const distribution = await RatingService.getRatingDistribution(gameId);
+
+      res.json({
+        success: true,
+        message: "Rating distribution retrieved successfully",
+        data: distribution,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve rating distribution",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// Tournament Social Features
+router.get("/:id/social", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 50 } = req.query;
+
+    // Get tournament social events from the new table
+    const events = await prisma.$queryRaw`
+      SELECT 
+        te.id,
+        te.type,
+        te.message,
+        te.metadata,
+        te.created_at as "timestamp",
+        u.username as "playerName",
+        u.avatar as "playerAvatar"
+      FROM tournament_events te
+      JOIN users u ON te.user_id = u.id
+      WHERE te.tournament_id = ${id}
+      ORDER BY te.created_at DESC
+      LIMIT ${Number(limit)}
+      OFFSET ${(Number(page) - 1) * Number(limit)}
+    `;
+
+    // Get total count
+    const totalResult = await prisma.$queryRaw`
+      SELECT COUNT(*) as count FROM tournament_events WHERE tournament_id = ${id}
+    `;
+    const total = Number((totalResult as any)[0]?.count || 0);
+
+    res.json({
+      events: (events as any[]).map((event: any) => ({
+        id: event.id,
+        type: event.type,
+        message: event.message,
+        playerName: event.playerName,
+        playerAvatar: event.playerAvatar,
+        timestamp: event.timestamp,
+        data: event.metadata,
+      })),
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        pages: Math.ceil(total / Number(limit)),
+      },
+    });
+  } catch (error) {
+    logger.error("Failed to get tournament social events", {
+      error,
+      tournamentId: req.params.id,
+    });
+    res.status(500).json({ error: "Failed to get social events" });
+  }
+});
+
+router.get("/:id/highlights", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+
+    // Get tournament highlights using proper Prisma ORM
+    const highlights = await prisma.tournamentHighlight.findMany({
+      where: { tournamentId: id },
+      include: {
+        user: {
+          select: {
+            username: true,
+            avatar: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: Number(limit),
+      skip: (Number(page) - 1) * Number(limit),
+    });
+
+    // Get total count
+    const total = await prisma.tournamentHighlight.count({
+      where: { tournamentId: id },
+    });
+
+    res.json({
+      highlights: highlights.map((highlight) => ({
+        id: highlight.id,
+        playerId: highlight.userId,
+        playerName: highlight.user.username,
+        playerAvatar: highlight.user.avatar,
+        achievement: highlight.achievement,
+        description: highlight.description,
+        timestamp: highlight.createdAt,
+      })),
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        pages: Math.ceil(total / Number(limit)),
+      },
+    });
+  } catch (error) {
+    logger.error("Failed to get tournament highlights", {
+      error,
+      tournamentId: req.params.id,
+    });
+    res.status(500).json({ error: "Failed to get highlights" });
+  }
+});
+
+router.get("/:id/spectators", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Get current spectator count using proper Prisma ORM
+    const spectatorCount = await prisma.tournamentSpectator.count({
+      where: {
+        tournamentId: id,
+        isActive: true,
+      },
+    });
+
+    res.json({
+      spectatorCount,
+      isLive: true,
+      lastUpdated: new Date(),
+    });
+  } catch (error) {
+    logger.error("Failed to get tournament spectators", {
+      error,
+      tournamentId: req.params.id,
+    });
+    res.status(500).json({ error: "Failed to get spectator count" });
+  }
+});
+
+router.get(
+  "/:id/offline-data",
+  authenticate,
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      // Get tournament data for offline mode
+      const tournament = await prisma.tournament.findUnique({
+        where: { id },
+        include: {
+          game: true,
+          players: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  username: true,
+                  avatar: true,
+                },
+              },
+            },
+          },
+          matches: {
+            include: {
+              player1: {
+                select: {
+                  id: true,
+                  username: true,
+                },
+              },
+              player2: {
+                select: {
+                  id: true,
+                  username: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!tournament) {
+        return res.status(404).json({ error: "Tournament not found" });
+      }
+
+      // Check if tournament supports offline mode
+      const offlineCapable = ["Chess", "Checkers", "TicTacToe"].includes(
+        tournament.game?.name || ""
+      );
+
+      if (!offlineCapable) {
+        return res
+          .status(400)
+          .json({ error: "Tournament does not support offline mode" });
+      }
+
+      const offlineData = {
+        tournamentId: tournament.id,
+        tournamentName: tournament.title,
+        gameType: tournament.game?.name || "Unknown",
+        bracket: tournament.bracket || { rounds: [], totalRounds: 0 },
+        players: tournament.players.map((p) => ({
+          id: p.user.id,
+          username: p.user.username,
+          avatar: p.user.avatar,
+        })),
+        matches: tournament.matches.map((m) => ({
+          id: m.id,
+          player1Id: m.player1.id,
+          player2Id: m.player2.id,
+          status: m.status,
+          result: m.result,
+        })),
+        rules: {
+          timeControl: "10+0", // Default since not in schema
+          format: "Single Elimination", // Default since not in schema
+          maxPlayers: tournament.maxPlayers,
+        },
+        lastSync: new Date(),
+        offlineCapable: true,
+      };
+
+      res.json(offlineData);
+    } catch (error) {
+      logger.error("Failed to get tournament offline data", {
+        error,
+        tournamentId: req.params.id,
+      });
+      res.status(500).json({ error: "Failed to get offline data" });
+    }
+  })
+);
+
+router.get(
+  "/:id/offline-capability",
+  authenticate,
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const tournament = await prisma.tournament.findUnique({
+        where: { id },
+        include: { game: true },
+      });
+
+      if (!tournament) {
+        return res.status(404).json({ error: "Tournament not found" });
+      }
+
+      const supportedGames = ["Chess", "Checkers", "TicTacToe"];
+      const offlineCapable = supportedGames.includes(
+        tournament.game?.name || ""
+      );
+
+      res.json({
+        offlineCapable,
+        gameType: tournament.game?.name || "Unknown",
+        reason: offlineCapable
+          ? null
+          : "Game type not supported for offline play",
+      });
+    } catch (error) {
+      logger.error("Failed to check tournament offline capability", {
+        error,
+        tournamentId: req.params.id,
+      });
+      res.status(500).json({ error: "Failed to check offline capability" });
     }
   })
 );

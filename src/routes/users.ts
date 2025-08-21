@@ -1522,4 +1522,192 @@ router.post(
   })
 );
 
+// Get user statistics (admin only)
+router.get(
+  "/:id/stats",
+  authenticate,
+  adminOnly,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+      include: {
+        gameStats: {
+          include: {
+            game: true,
+          },
+        },
+        tournaments: {
+          include: {
+            tournament: true,
+          },
+        },
+        payments: {
+          where: {
+            status: "COMPLETED",
+            type: "PRIZE_PAYOUT",
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Calculate comprehensive stats
+    const totalGamesPlayed = user.gameStats.reduce(
+      (sum, stat) => sum + stat.gamesPlayed,
+      0
+    );
+    const totalWins = user.gameStats.reduce(
+      (sum, stat) => sum + stat.gamesWon,
+      0
+    );
+    const totalLosses = user.gameStats.reduce(
+      (sum, stat) => sum + stat.gamesLost,
+      0
+    );
+    const totalDraws = user.gameStats.reduce(
+      (sum, stat) => sum + stat.gamesDrawn,
+      0
+    );
+    const totalTimeSpent = user.gameStats.reduce(
+      (sum, stat) => sum + stat.totalPlayTime,
+      0
+    );
+
+    const winRate =
+      totalGamesPlayed > 0 ? (totalWins / totalGamesPlayed) * 100 : 0;
+    const currentEloRating = user.gameStats[0]?.currentRating || 1200;
+    const highestEloRating = Math.max(
+      ...user.gameStats.map((stat) => stat.peakRating),
+      1200
+    );
+
+    const totalTournamentsPlayed = user.tournaments.length;
+    const totalTournamentsWon = user.tournaments.filter(
+      (t) => t.placement === 1
+    ).length;
+    const totalWinnings = user.payments.reduce(
+      (sum, payment) => sum + payment.amount,
+      0
+    );
+
+    const favoriteGameType =
+      user.gameStats.length > 0
+        ? user.gameStats.reduce((prev, current) =>
+            prev.gamesPlayed > current.gamesPlayed ? prev : current
+          ).game.name
+        : "None";
+
+    const stats = {
+      totalGamesPlayed,
+      totalWins,
+      totalLosses,
+      totalDraws,
+      winRate,
+      currentEloRating,
+      highestEloRating,
+      totalTournamentsPlayed,
+      totalTournamentsWon,
+      totalWinnings,
+      averageGameDuration:
+        totalGamesPlayed > 0 ? totalTimeSpent / totalGamesPlayed / 60 : 0, // in minutes
+      favoriteGameType,
+      lastActiveDate: user.lastLogin?.toISOString() || "",
+      accountCreatedDate: user.createdAt.toISOString(),
+      totalTimeSpent: Math.floor(totalTimeSpent / 60), // in minutes
+    };
+
+    res.json({
+      success: true,
+      data: stats,
+    });
+  })
+);
+
+// Get user activity log (admin only)
+router.get(
+  "/:id/activity",
+  authenticate,
+  adminOnly,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { page = 1, limit = 50 } = req.query;
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Get real activity data using proper Prisma ORM
+    const activities = await prisma.userActivity.findMany({
+      where: { userId: id },
+      orderBy: { createdAt: "desc" },
+      take: Number(limit),
+      skip: (Number(page) - 1) * Number(limit),
+    });
+
+    // Get total count
+    const total = await prisma.userActivity.count({
+      where: { userId: id },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        activities: (activities as any[]).map((activity: any) => ({
+          id: activity.id,
+          userId: activity.userId,
+          activityType: activity.activityType,
+          description: activity.description,
+          ipAddress: activity.ipAddress,
+          userAgent: activity.userAgent,
+          metadata: activity.metadata,
+          createdAt: activity.createdAt,
+        })),
+        pagination: {
+          page: Number(page),
+          limit: Number(limit),
+          total,
+          pages: Math.ceil(total / Number(limit)),
+        },
+      },
+    });
+  })
+);
+
+// Log user activity (for future implementation)
+router.post(
+  "/:id/activity",
+  authenticate,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { activityType, description, metadata, ipAddress, userAgent } =
+      req.body;
+
+    // Store activity using proper Prisma ORM
+    await prisma.userActivity.create({
+      data: {
+        userId: id,
+        activityType,
+        description,
+        ipAddress,
+        userAgent,
+        metadata,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Activity logged successfully",
+    });
+  })
+);
+
 export default router;

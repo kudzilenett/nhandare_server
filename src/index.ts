@@ -32,6 +32,7 @@ import leaderboardRoutes from "./routes/leaderboard";
 import paymentRoutes from "./routes/payments";
 import zimbabweRoutes from "./routes/zimbabwe";
 import matchmakingRoutes from "./routes/matchmaking";
+import moderationRoutes from "./routes/moderation";
 
 // Import socket handlers
 import { initializeSocket } from "./socket";
@@ -137,6 +138,7 @@ app.use("/api/matches", matchRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/zimbabwe", zimbabweRoutes);
+app.use("/api/moderation", moderationRoutes);
 
 // Initialize socket handlers
 initializeSocket(io);
@@ -238,6 +240,20 @@ async function startServer() {
           });
         }
       }, 5 * 60 * 1000); // Check every 5 minutes
+
+      // Start tournament status automation service (every minute)
+      setInterval(async () => {
+        try {
+          const { TournamentStatusService } = await import(
+            "./services/TournamentStatusService"
+          );
+          await TournamentStatusService.checkStatusTransitions();
+        } catch (error) {
+          logger.error("Error in tournament status automation service", {
+            error,
+          });
+        }
+      }, 60000); // Check every minute
     });
   } catch (error) {
     logger.error("❌ Failed to start server", { error });

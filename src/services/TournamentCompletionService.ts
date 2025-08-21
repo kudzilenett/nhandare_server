@@ -103,12 +103,75 @@ export class TournamentCompletionService {
       const bracketResults = this.buildBracketResults(tournament.matches);
 
       // Get prize breakdown
-      const prizeBreakdown =
-        (tournament.prizeBreakdown as unknown as PrizeBreakdown) || {
+      let prizeBreakdown: PrizeBreakdown;
+
+      if (tournament.prizeBreakdown) {
+        // Handle custom prize breakdown formats
+        const customBreakdown = tournament.prizeBreakdown as any;
+
+        if (
+          customBreakdown.first &&
+          customBreakdown.second &&
+          customBreakdown.third
+        ) {
+          // Standard format
+          prizeBreakdown = {
+            first: Number(customBreakdown.first),
+            second: Number(customBreakdown.second),
+            third: Number(customBreakdown.third),
+          };
+        } else if (
+          customBreakdown["1st"] &&
+          customBreakdown["2nd"] &&
+          customBreakdown["3rd"]
+        ) {
+          // Custom format with 1st, 2nd, 3rd
+          prizeBreakdown = {
+            first: Number(customBreakdown["1st"]),
+            second: Number(customBreakdown["2nd"]),
+            third: Number(customBreakdown["3rd"]),
+          };
+        } else {
+          // Fallback to default calculation
+          prizeBreakdown = {
+            first: roundToCents(tournament.prizePool * 0.6),
+            second: roundToCents(tournament.prizePool * 0.25),
+            third: roundToCents(tournament.prizePool * 0.15),
+          };
+        }
+      } else {
+        // Default calculation
+        prizeBreakdown = {
           first: roundToCents(tournament.prizePool * 0.6),
           second: roundToCents(tournament.prizePool * 0.25),
           third: roundToCents(tournament.prizePool * 0.15),
         };
+      }
+
+      logger.info("Prize breakdown calculated", {
+        tournamentId,
+        prizePool: tournament.prizePool,
+        prizePoolType: typeof tournament.prizePool,
+        prizeBreakdown,
+        originalBreakdown: tournament.prizeBreakdown,
+      });
+
+      // Validate prize breakdown
+      if (
+        !prizeBreakdown.first ||
+        !prizeBreakdown.second ||
+        !prizeBreakdown.third
+      ) {
+        throw new Error("Invalid prize breakdown structure");
+      }
+
+      if (
+        isNaN(prizeBreakdown.first) ||
+        isNaN(prizeBreakdown.second) ||
+        isNaN(prizeBreakdown.third)
+      ) {
+        throw new Error("Prize breakdown contains invalid numbers");
+      }
 
       // Determine winners based on bracket results
       const winners: TournamentWinner[] = [];
@@ -142,6 +205,17 @@ export class TournamentCompletionService {
           prizeAmount: prizeBreakdown.third,
         });
       }
+
+      logger.info("Winners determined", {
+        tournamentId,
+        winnersCount: winners.length,
+        winners: winners.map((w) => ({
+          userId: w.userId,
+          placement: w.placement,
+          prizeAmount: w.prizeAmount,
+          prizeAmountType: typeof w.prizeAmount,
+        })),
+      });
 
       return winners;
     } catch (error) {
@@ -232,6 +306,48 @@ export class TournamentCompletionService {
     message: string;
   }> {
     try {
+      // Check if tournament exists and is valid
+      const tournament = await prisma.tournament.findUnique({
+        where: { id: tournamentId },
+        include: {
+          matches: {
+            where: {
+              status: { not: "CANCELLED" },
+            },
+            orderBy: { round: "asc" },
+          },
+          players: {
+            where: { isActive: true },
+            include: { user: true },
+          },
+        },
+      });
+
+      if (!tournament) {
+        throw new Error(`Tournament not found: ${tournamentId}`);
+      }
+
+      if (tournament.status === "COMPLETED") {
+        return {
+          success: false,
+          winners: [],
+          message: "Tournament is already completed",
+        };
+      }
+
+      if (tournament.status !== "ACTIVE") {
+        throw new Error(
+          `Tournament is not in ACTIVE state: ${tournament.status}`
+        );
+      }
+
+      logger.info("Tournament validation passed", {
+        tournamentId,
+        status: tournament.status,
+        matchesCount: tournament.matches.length,
+        playersCount: tournament.players.length,
+      });
+
       // Check if tournament is ready for completion
       const isReady = await this.isTournamentReadyForCompletion(tournamentId);
       if (!isReady) {
@@ -253,8 +369,32 @@ export class TournamentCompletionService {
         };
       }
 
+      // Validate prize amounts
+      for (const winner of winners) {
+        if (
+          !winner.prizeAmount ||
+          isNaN(winner.prizeAmount) ||
+          winner.prizeAmount <= 0
+        ) {
+          logger.error("Invalid prize amount for winner", {
+            userId: winner.userId,
+            placement: winner.placement,
+            prizeAmount: winner.prizeAmount,
+          });
+          throw new Error(
+            `Invalid prize amount for winner: ${winner.prizeAmount}`
+          );
+        }
+      }
+
       // Use transaction to ensure data consistency
+      logger.info("Starting tournament completion transaction", {
+        tournamentId,
+      });
+
       await prisma.$transaction(async (tx) => {
+        logger.info("Transaction started successfully", { tournamentId });
+
         // Update tournament status
         await tx.tournament.update({
           where: { id: tournamentId },
@@ -264,31 +404,40 @@ export class TournamentCompletionService {
           },
         });
 
+        logger.info("Tournament status updated to COMPLETED", { tournamentId });
+
         // Update player placements and prize amounts
         for (const winner of winners) {
-          await tx.tournamentPlayer.update({
-            where: {
-              userId_tournamentId: {
-                userId: winner.userId,
-                tournamentId,
+          try {
+            await tx.tournamentPlayer.update({
+              where: {
+                userId_tournamentId: {
+                  userId: winner.userId,
+                  tournamentId,
+                },
               },
-            },
-            data: {
-              placement: winner.placement,
-              prizeWon: winner.prizeAmount,
-              isEliminated: false,
-            },
-          });
+              data: {
+                placement: winner.placement,
+                prizeWon: winner.prizeAmount,
+                isEliminated: false,
+              },
+            });
 
-          // Create prize payout payment
-          await tx.payment.create({
-            data: {
+            // Create prize payout payment
+            logger.info("Creating payment for winner", {
+              userId: winner.userId,
+              placement: winner.placement,
+              prizeAmount: winner.prizeAmount,
+              prizeAmountType: typeof winner.prizeAmount,
+            });
+
+            const paymentData = {
               userId: winner.userId,
               tournamentId,
-              amount: winner.prizeAmount,
+              amount: Number(winner.prizeAmount), // Ensure it's a valid number
               currency: "USD",
-              type: "PRIZE_PAYOUT",
-              status: "COMPLETED",
+              type: "PRIZE_PAYOUT" as const,
+              status: "COMPLETED" as const,
               paymentConfirmedAt: new Date(),
               metadata: {
                 reason: `Tournament ${
@@ -302,8 +451,53 @@ export class TournamentCompletionService {
                 processedAt: new Date().toISOString(),
                 automatic: true,
               },
-            },
-          });
+            };
+
+            // Validate payment data
+            if (
+              !paymentData.userId ||
+              !paymentData.tournamentId ||
+              !paymentData.amount
+            ) {
+              throw new Error(
+                `Invalid payment data: userId=${paymentData.userId}, tournamentId=${paymentData.tournamentId}, amount=${paymentData.amount}`
+              );
+            }
+
+            if (isNaN(paymentData.amount) || paymentData.amount <= 0) {
+              throw new Error(`Invalid amount: ${paymentData.amount}`);
+            }
+
+            logger.info("Payment data prepared", { paymentData });
+
+            try {
+              await tx.payment.create({
+                data: paymentData,
+              });
+            } catch (paymentError) {
+              logger.error("Payment creation failed", {
+                paymentData,
+                error: paymentError,
+                errorName: (paymentError as any)?.name,
+                errorMessage: (paymentError as any)?.message,
+                errorCode: (paymentError as any)?.code,
+              });
+              throw paymentError;
+            }
+
+            logger.info("Payment created successfully for winner", {
+              userId: winner.userId,
+              placement: winner.placement,
+            });
+          } catch (error) {
+            logger.error("Error processing winner", {
+              userId: winner.userId,
+              placement: winner.placement,
+              prizeAmount: winner.prizeAmount,
+              error,
+            });
+            throw error;
+          }
         }
 
         // Mark all remaining players as eliminated
@@ -318,6 +512,14 @@ export class TournamentCompletionService {
             isActive: false,
           },
         });
+
+        logger.info("All remaining players marked as eliminated", {
+          tournamentId,
+        });
+      });
+
+      logger.info("Tournament completion transaction completed successfully", {
+        tournamentId,
       });
 
       logger.info("Tournament completed successfully", {
@@ -336,7 +538,35 @@ export class TournamentCompletionService {
         message: `Tournament completed with ${winners.length} winners`,
       };
     } catch (error) {
-      logger.error("Error completing tournament", { tournamentId, error });
+      logger.error("Error completing tournament", {
+        tournamentId,
+        error,
+        errorName: (error as any)?.name,
+        errorMessage: (error as any)?.message,
+        errorCode: (error as any)?.code,
+        stack: (error as any)?.stack,
+      });
+
+      // Check if it's a Prisma validation error
+      if ((error as any)?.name === "PrismaClientValidationError") {
+        logger.error("Prisma validation error details", {
+          tournamentId,
+          error: (error as any)?.message,
+        });
+      }
+
+      // Check if it's a database constraint error
+      if (
+        (error as any)?.code === "P2002" ||
+        (error as any)?.code === "P2003"
+      ) {
+        logger.error("Database constraint error", {
+          tournamentId,
+          errorCode: (error as any)?.code,
+          errorMessage: (error as any)?.message,
+        });
+      }
+
       throw error;
     }
   }

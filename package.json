@@ -13,6 +13,13 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:unit": "jest --testPathPattern=tests/.*\\.test\\.ts --testNamePattern=\"(Unit|Service|Component)\"",
+    "test:integration": "jest --testPathPattern=tests/.*\\.test\\.ts --testNamePattern=\"(Integration|API|Endpoint)\"",
+    "test:load": "jest --testPathPattern=tests/tournament-load\\.test\\.ts",
+    "test:api": "jest --testPathPattern=tests/api-endpoints\\.test\\.ts",
+    "test:automation": "jest --testPathPattern=tests/tournament-automation\\.test\\.ts",
+    "test:all": "npm run test:unit && npm run test:integration && npm run test:load && npm run test:api && npm run test:automation",
+    "test:ci": "jest --ci --coverage --watchAll=false",
     "db:migrate": "prisma migrate dev",
     "db:migrate:prod": "prisma migrate deploy",
     "db:generate": "prisma generate",
@@ -27,7 +34,8 @@
     "pm2:stop": "pm2 stop ecosystem.config.js",
     "pm2:logs": "pm2 logs",
     "deploy": "npm run build && npm run start:prod",
-    "seed:active-tournament": "npx tsx prisma/seed-active-tournament.ts"
+    "seed:active-tournament": "npx tsx prisma/seed-active-tournament.ts",
+    "seed:industry-standard": "npx tsx prisma/seed-industry-standard.ts"
   },
   "keywords": [
     "gaming",
