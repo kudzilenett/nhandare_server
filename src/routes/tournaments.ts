@@ -128,7 +128,6 @@ router.get(
     const tournament = await prisma.tournament.findUnique({
       where: { id },
       include: {
-        game: true,
         players: {
           include: {
             user: {
@@ -136,17 +135,28 @@ router.get(
                 id: true,
                 username: true,
                 avatar: true,
-                province: true,
-                city: true,
               },
             },
           },
         },
-        _count: {
-          select: {
-            players: true,
-            matches: true,
+        matches: {
+          include: {
+            player1: {
+              select: {
+                id: true,
+                username: true,
+                avatar: true,
+              },
+            },
+            player2: {
+              select: {
+                id: true,
+                username: true,
+                avatar: true,
+              },
+            },
           },
+          orderBy: [{ round: "asc" }, { createdAt: "asc" }],
         },
       },
     });
@@ -178,8 +188,8 @@ router.get(
         tournament: {
           ...tournament,
           stats: {
-            totalPlayers: tournament._count.players,
-            totalMatches: tournament._count.matches,
+            totalPlayers: tournament.players.length,
+            totalMatches: tournament.matches.length,
             spotsRemaining: tournament.maxPlayers - tournament.currentPlayers,
           },
           userRegistration,
@@ -508,6 +518,7 @@ router.get(
               },
             },
           },
+          orderBy: [{ round: "asc" }, { createdAt: "asc" }],
         },
       },
     });
@@ -520,6 +531,52 @@ router.get(
       return;
     }
 
+    // If tournament has a bracket structure, populate it with actual match data
+    let populatedBracket = tournament.bracket;
+    if (tournament.bracket && tournament.matches) {
+      try {
+        const bracket = tournament.bracket as any;
+
+        // Populate each round with actual match data
+        if (bracket.rounds && Array.isArray(bracket.rounds)) {
+          bracket.rounds.forEach((round: any) => {
+            if (round.matches && Array.isArray(round.matches)) {
+              round.matches.forEach((bracketMatch: any) => {
+                // Find corresponding database match by round and position
+                // Since bracket has placeholder data, we need to match by round and match position
+                const matchIndex = bracketMatch.id
+                  ? parseInt(bracketMatch.id.split("_match")[1]) - 1
+                  : 0;
+                const roundMatches = tournament.matches.filter(
+                  (m) => m.round === round.round
+                );
+                const dbMatch = roundMatches[matchIndex];
+
+                if (dbMatch) {
+                  // Populate bracket match with actual data
+                  bracketMatch.id = dbMatch.id;
+                  bracketMatch.player1Id = dbMatch.player1?.id || null;
+                  bracketMatch.player2Id = dbMatch.player2?.id || null;
+                  bracketMatch.status = dbMatch.status;
+                  bracketMatch.winnerId = dbMatch.winnerId;
+                  bracketMatch.createdAt = dbMatch.createdAt;
+
+                  // Add player info for display
+                  bracketMatch.player1Info = dbMatch.player1;
+                  bracketMatch.player2Info = dbMatch.player2;
+                }
+              });
+            }
+          });
+        }
+
+        populatedBracket = bracket;
+      } catch (error) {
+        console.error("Error populating bracket:", error);
+        // Continue with original bracket if population fails
+      }
+    }
+
     res.json({
       success: true,
       data: {
@@ -528,7 +585,7 @@ router.get(
           title: tournament.title,
           status: tournament.status,
           bracketType: tournament.bracketType,
-          bracket: tournament.bracket,
+          bracket: populatedBracket,
         },
         players: tournament.players,
         matches: tournament.matches,
@@ -1070,6 +1127,35 @@ router.post(
         success: false,
         message: "Failed to generate bracket",
         error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })
+);
+
+// POST /api/tournaments/:id/regenerate-bracket - Regenerate tournament bracket
+router.post(
+  "/:id/regenerate-bracket",
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    try {
+      const { BracketGenerationService } = await import(
+        "../services/BracketGenerationService"
+      );
+      const bracket = await BracketGenerationService.regenerateBracket(id);
+
+      res.json({
+        success: true,
+        message: "Bracket regenerated successfully",
+        data: {
+          bracket,
+        },
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error.message || "Failed to regenerate bracket",
       });
     }
   })

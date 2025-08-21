@@ -1,5 +1,12 @@
-import { PrismaClient, BracketType } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import logger from "../config/logger";
+
+// Define the bracket type enum locally to match Prisma schema
+type BracketType =
+  | "SINGLE_ELIMINATION"
+  | "DOUBLE_ELIMINATION"
+  | "ROUND_ROBIN"
+  | "SWISS";
 
 const prisma = new PrismaClient();
 
@@ -11,6 +18,7 @@ export interface SeededPlayer {
 }
 
 export interface BracketMatch {
+  id?: string; // Database match ID
   player1Seed: number | "TBD";
   player2Seed: number | "TBD";
   player1Id: string | null;
@@ -18,6 +26,9 @@ export interface BracketMatch {
   matchNumber: number;
   round: number;
   isBye: boolean;
+  winnerId?: string | null; // Track winner for progression
+  nextMatchId?: string | null; // Link to next match in bracket
+  status?: "PENDING" | "ACTIVE" | "COMPLETED" | "CANCELLED";
 }
 
 export interface BracketRound {
@@ -125,9 +136,9 @@ export class BracketGenerationService {
   private static seedPlayers(players: any[]): SeededPlayer[] {
     return players
       .map((player, index) => ({
-        userId: player.userId,
+        userId: player.user.id, // Fixed: access player.user.id not player.userId
         seedNumber: index + 1,
-        rating: player.user.gameStats[0]?.rating || 1200,
+        rating: player.user.gameStats?.[0]?.rating || 1200,
         registeredAt: player.registeredAt,
       }))
       .sort((a, b) => b.rating - a.rating) // Highest rated first
@@ -178,6 +189,9 @@ export class BracketGenerationService {
         matchNumber: i + 1,
         round: 1,
         isBye: false,
+        status: "PENDING",
+        winnerId: null,
+        nextMatchId: null,
       };
 
       // Handle bye (odd number of players)
@@ -186,9 +200,15 @@ export class BracketGenerationService {
         if (player1Index < playerCount) {
           match.player2Id = null;
           match.player2Seed = "TBD";
+          // Auto-advance player1 to next round
+          match.winnerId = match.player1Id;
+          match.status = "COMPLETED";
         } else if (player2Index < playerCount) {
           match.player1Id = null;
           match.player1Seed = "TBD";
+          // Auto-advance player2 to next round
+          match.winnerId = match.player2Id;
+          match.status = "COMPLETED";
         }
       }
 
@@ -200,7 +220,7 @@ export class BracketGenerationService {
       matches: firstRoundMatches,
     });
 
-    // Generate subsequent rounds (TBD matches)
+    // Generate subsequent rounds with proper progression linking
     for (let round = 2; round <= rounds; round++) {
       const matchesInRound = Math.ceil(bracketSize / Math.pow(2, round));
       const roundMatches: BracketMatch[] = [];
@@ -214,6 +234,9 @@ export class BracketGenerationService {
           matchNumber: i + 1,
           round,
           isBye: false,
+          status: "PENDING",
+          winnerId: null,
+          nextMatchId: null,
         });
       }
 
@@ -222,6 +245,9 @@ export class BracketGenerationService {
         matches: roundMatches,
       });
     }
+
+    // Link matches for progression (winners advance to next round)
+    this.linkBracketProgression(bracket);
 
     return bracket;
   }
@@ -412,7 +438,7 @@ export class BracketGenerationService {
           matches.push({
             player1Id: match.player1Id,
             player2Id: match.player2Id,
-            gameId: tournament.gameId, // Add required gameId field
+            gameId: tournament.gameId,
             tournamentId,
             round: 1,
             status: "PENDING",
@@ -426,9 +452,12 @@ export class BracketGenerationService {
           `Creating ${matches.length} matches for tournament ${tournamentId}`
         );
 
-        await prisma.match.createMany({
+        const createdMatches = await prisma.match.createMany({
           data: matches,
         });
+
+        // Update bracket with actual match IDs
+        await this.updateBracketWithMatchIds(tournamentId, bracket);
 
         logger.info(
           `Created ${matches.length} first round matches for tournament ${tournamentId}`
@@ -441,6 +470,56 @@ export class BracketGenerationService {
     } catch (error) {
       logger.error(
         `Failed to create first round matches for tournament ${tournamentId}`,
+        { error }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Update bracket with actual match IDs from database
+   */
+  private static async updateBracketWithMatchIds(
+    tournamentId: string,
+    bracket: BracketStructure
+  ): Promise<void> {
+    try {
+      // Get all matches for this tournament
+      const matches = await prisma.match.findMany({
+        where: { tournamentId },
+        select: { id: true, player1Id: true, player2Id: true, round: true },
+        orderBy: [{ round: "asc" }, { createdAt: "asc" }],
+      });
+
+      // Update bracket with match IDs
+      for (const round of bracket.rounds) {
+        for (const bracketMatch of round.matches) {
+          // Find corresponding database match
+          const dbMatch = matches.find(
+            (match) =>
+              match.player1Id === bracketMatch.player1Id &&
+              match.player2Id === bracketMatch.player2Id &&
+              match.round === bracketMatch.round
+          );
+
+          if (dbMatch) {
+            bracketMatch.id = dbMatch.id;
+          }
+        }
+      }
+
+      // Update tournament bracket in database
+      await prisma.tournament.update({
+        where: { id: tournamentId },
+        data: { bracket: bracket as any },
+      });
+
+      logger.info(
+        `Updated bracket for tournament ${tournamentId} with match IDs`
+      );
+    } catch (error) {
+      logger.error(
+        `Failed to update bracket with match IDs for tournament ${tournamentId}`,
         { error }
       );
       throw error;
@@ -462,17 +541,227 @@ export class BracketGenerationService {
   }
 
   /**
-   * Update bracket after match completion
+   * Update bracket after a match is completed
    */
   static async updateBracketAfterMatch(
     tournamentId: string,
-    matchId: string
+    matchId: string,
+    winnerId: string
   ): Promise<void> {
-    // TODO: Implement bracket update logic
-    // This will advance winners to next rounds
-    // Update TBD matches with actual player IDs
-    logger.info(
-      `Bracket update needed for tournament ${tournamentId} after match ${matchId}`
-    );
+    try {
+      // Get the tournament with its bracket
+      const tournament = await prisma.tournament.findUnique({
+        where: { id: tournamentId },
+        select: { bracket: true },
+      });
+
+      if (!tournament || !tournament.bracket) {
+        throw new Error("Tournament or bracket not found");
+      }
+
+      const bracket = tournament.bracket as unknown as BracketStructure;
+
+      // Find the completed match in the bracket
+      let completedMatch: BracketMatch | null = null;
+      let completedRoundIndex = -1;
+
+      for (
+        let roundIndex = 0;
+        roundIndex < bracket.rounds.length;
+        roundIndex++
+      ) {
+        const round = bracket.rounds[roundIndex];
+        const matchIndex = round.matches.findIndex((m) => m.id === matchId);
+
+        if (matchIndex !== -1) {
+          completedMatch = round.matches[matchIndex];
+          completedRoundIndex = roundIndex;
+          break;
+        }
+      }
+
+      if (!completedMatch) {
+        throw new Error("Match not found in bracket");
+      }
+
+      // Update the match with winner
+      completedMatch.winnerId = winnerId;
+      completedMatch.status = "COMPLETED";
+
+      // If there's a next match, assign the winner
+      if (
+        completedMatch.nextMatchId &&
+        completedRoundIndex < bracket.rounds.length - 1
+      ) {
+        const nextRound = bracket.rounds[completedRoundIndex + 1];
+        const nextMatch = nextRound.matches.find(
+          (m) => m.id === completedMatch!.nextMatchId
+        );
+
+        if (nextMatch) {
+          // Determine which slot to fill based on match position
+          const matchPosition =
+            bracket.rounds[completedRoundIndex].matches.indexOf(completedMatch);
+          const isFirstSlot = matchPosition % 2 === 0;
+
+          if (isFirstSlot) {
+            nextMatch.player1Id = winnerId;
+            nextMatch.player1Seed = "TBD";
+          } else {
+            nextMatch.player2Id = winnerId;
+            nextMatch.player2Seed = "TBD";
+          }
+
+          // If both players are now assigned, mark match as ready
+          if (nextMatch.player1Id && nextMatch.player2Id) {
+            nextMatch.status = "PENDING";
+          }
+        }
+      }
+
+      // Update the tournament bracket in database
+      await prisma.tournament.update({
+        where: { id: tournamentId },
+        data: { bracket: bracket as any },
+      });
+
+      logger.info(
+        `Updated bracket for tournament ${tournamentId} after match ${matchId}`
+      );
+    } catch (error) {
+      logger.error(`Failed to update bracket after match: ${error}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Regenerate bracket for an existing tournament
+   * Useful for fixing bracket issues or updating tournament structure
+   */
+  static async regenerateBracket(
+    tournamentId: string
+  ): Promise<BracketStructure> {
+    try {
+      // Get tournament with players and existing matches
+      const tournament = await prisma.tournament.findUnique({
+        where: { id: tournamentId },
+        include: {
+          players: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  username: true,
+                  avatar: true,
+                },
+              },
+            },
+          },
+          matches: true,
+        },
+      });
+
+      if (!tournament) {
+        throw new Error("Tournament not found");
+      }
+
+      if (tournament.status !== "OPEN" && tournament.status !== "ACTIVE") {
+        throw new Error("Cannot regenerate bracket for completed tournament");
+      }
+
+      // Convert players to seeded format
+      const seededPlayers: SeededPlayer[] = tournament.players.map(
+        (player, index) => ({
+          userId: player.user.id,
+          seedNumber: index + 1,
+          rating: 1200, // Default rating if not available
+          registeredAt: player.registeredAt,
+        })
+      );
+
+      // Generate new bracket structure
+      let bracket: BracketStructure;
+
+      switch (tournament.bracketType) {
+        case "SINGLE_ELIMINATION":
+          bracket = this.generateSingleElimination(seededPlayers);
+          break;
+        case "DOUBLE_ELIMINATION":
+          bracket = this.generateDoubleElimination(seededPlayers);
+          break;
+        case "SWISS":
+          bracket = this.generateSwissSystem(seededPlayers);
+          break;
+        case "ROUND_ROBIN":
+          bracket = this.generateRoundRobin(seededPlayers);
+          break;
+        default:
+          throw new Error(
+            `Unsupported bracket type: ${tournament.bracketType}`
+          );
+      }
+
+      // Link bracket progression
+      this.linkBracketProgression(bracket);
+
+      // Update tournament with new bracket
+      await prisma.tournament.update({
+        where: { id: tournamentId },
+        data: { bracket: bracket as any },
+      });
+
+      // If there are existing matches, try to link them to the new bracket
+      if (tournament.matches && tournament.matches.length > 0) {
+        await this.updateBracketWithMatchIds(tournamentId, bracket);
+      }
+
+      logger.info(`Regenerated bracket for tournament ${tournamentId}`);
+      return bracket;
+    } catch (error) {
+      logger.error(`Failed to regenerate bracket: ${error}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Link matches between rounds for proper progression
+   */
+  private static linkBracketProgression(bracket: BracketStructure): void {
+    // Link matches between rounds so winners advance properly
+    for (
+      let roundIndex = 0;
+      roundIndex < bracket.rounds.length - 1;
+      roundIndex++
+    ) {
+      const currentRound = bracket.rounds[roundIndex];
+      const nextRound = bracket.rounds[roundIndex + 1];
+
+      // Link each match in current round to next round
+      currentRound.matches.forEach((match, matchIndex) => {
+        // Find the next match in the next round that this winner should play
+        const nextMatchIndex = Math.floor(matchIndex / 2); // Simple pairing: winners from adjacent matches play each other
+
+        if (nextMatchIndex < nextRound.matches.length) {
+          const nextMatch = nextRound.matches[nextMatchIndex];
+
+          // Link the current match to the next match
+          match.nextMatchId = nextMatch.id;
+
+          // Assign winner to the appropriate slot in next match
+          if (matchIndex % 2 === 0) {
+            nextMatch.player1Id = null; // Will be filled when match completes
+            nextMatch.player1Seed = "TBD"; // Mark as filled
+          } else {
+            nextMatch.player2Id = null; // Will be filled when match completes
+            nextMatch.player2Seed = "TBD"; // Mark as filled
+          }
+
+          // If both players are assigned, mark match as ready
+          if (nextMatch.player1Id && nextMatch.player2Id) {
+            nextMatch.status = "PENDING";
+          }
+        }
+      });
+    }
   }
 }
