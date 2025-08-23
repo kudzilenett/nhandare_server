@@ -542,15 +542,27 @@ router.get(
           bracket.rounds.forEach((round: any) => {
             if (round.matches && Array.isArray(round.matches)) {
               round.matches.forEach((bracketMatch: any) => {
-                // Find corresponding database match by round and position
-                // Since bracket has placeholder data, we need to match by round and match position
-                const matchIndex = bracketMatch.id
-                  ? parseInt(bracketMatch.id.split("_match")[1]) - 1
-                  : 0;
+                // Find corresponding database match by round and match position
                 const roundMatches = tournament.matches.filter(
                   (m) => m.round === round.round
                 );
-                const dbMatch = roundMatches[matchIndex];
+
+                // Try to find match by ID first, then by position
+                let dbMatch = null;
+                if (
+                  bracketMatch.id &&
+                  bracketMatch.id !==
+                    `round${round.round}_match${bracketMatch.matchNumber}`
+                ) {
+                  // If bracket has a real match ID, find it directly
+                  dbMatch = roundMatches.find((m) => m.id === bracketMatch.id);
+                } else {
+                  // Find by position in round
+                  const matchIndex = bracketMatch.matchNumber
+                    ? bracketMatch.matchNumber - 1
+                    : 0;
+                  dbMatch = roundMatches[matchIndex];
+                }
 
                 if (dbMatch) {
                   // Populate bracket match with actual data
@@ -564,6 +576,12 @@ router.get(
                   // Add player info for display
                   bracketMatch.player1Info = dbMatch.player1;
                   bracketMatch.player2Info = dbMatch.player2;
+                } else if (round.round > 1) {
+                  // For subsequent rounds, try to populate from previous round winners
+                  // This is a simplified approach - in production you'd want a more sophisticated winner advancement system
+                  bracketMatch.status = "PENDING";
+                  bracketMatch.player1Info = null;
+                  bracketMatch.player2Info = null;
                 }
               });
             }
@@ -2214,6 +2232,37 @@ router.get(
         tournamentId: req.params.id,
       });
       res.status(500).json({ error: "Failed to check offline capability" });
+    }
+  })
+);
+
+// GET /api/tournaments/:id/winners - Get tournament winners
+router.get(
+  "/:id/winners",
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: tournamentId } = req.params;
+
+    try {
+      const { TournamentMatchService } = await import(
+        "../services/TournamentMatchService"
+      );
+
+      const winners = await TournamentMatchService.getTournamentWinners(
+        tournamentId
+      );
+
+      res.json({
+        success: true,
+        message: "Tournament winners retrieved successfully",
+        data: winners,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve tournament winners",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
     }
   })
 );

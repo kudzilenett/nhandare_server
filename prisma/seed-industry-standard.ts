@@ -17,6 +17,15 @@ const SEED_CONFIG = {
     ACTIVE_PERCENTAGE: 0.2, // 20% active
     COMPLETED_PERCENTAGE: 0.6, // 60% completed
     OPEN_PERCENTAGE: 0.2, // 20% open
+    // Bracket type distribution for comprehensive testing
+    BRACKET_TYPES: {
+      SINGLE_ELIMINATION: 0.4, // 40% - most common
+      DOUBLE_ELIMINATION: 0.25, // 25% - popular for fairness
+      ROUND_ROBIN: 0.2, // 20% - good for small groups
+      SWISS: 0.15, // 15% - efficient for large groups
+    },
+    // Advanced seeding distribution
+    ADVANCED_SEEDING_PERCENTAGE: 0.7, // 70% use advanced seeding
   },
   MATCHES: {
     PER_TOURNAMENT: 15,
@@ -54,6 +63,27 @@ const SEED_CONFIG = {
       "Manicaland Provincial Complex",
       "National University of Science and Technology",
     ],
+  },
+  // New: Advanced seeding configuration
+  SEEDING: {
+    PERFORMANCE_WEIGHTS: {
+      RATING: 0.4, // Base rating weight
+      PERFORMANCE: 0.25, // Recent performance
+      HISTORY: 0.2, // Tournament history
+      REGIONAL: 0.1, // Regional factors
+      CONSISTENCY: 0.05, // Performance consistency
+    },
+    REGIONAL_RADIUS_RANGE: [50, 200], // km
+    RECENT_TOURNAMENTS_RANGE: [3, 10],
+    CONSISTENCY_SCORE_RANGE: [0.6, 1.0],
+    REGIONAL_STRENGTH_RANGE: [0.5, 1.0],
+  },
+  // New: Bracket testing configuration
+  BRACKET_TESTING: {
+    PLAYER_COUNTS: [8, 16, 32, 64, 128], // Test various tournament sizes
+    ENSURE_ALL_TYPES: true, // Guarantee at least one tournament of each bracket type
+    TEST_ADVANCED_SEEDING: true, // Test advanced seeding configurations
+    VALIDATION_TESTING: true, // Test bracket validation systems
   },
 };
 
@@ -450,6 +480,24 @@ async function main() {
     console.log(`   🎮 Chess Matches: ${matches.length}`);
     console.log(`   💰 Payments: ${payments.length}`);
     console.log(`   📊 Chess Statistics: ${gameStatistics.length}`);
+
+    // Show bracket type distribution
+    const bracketTypeCounts = tournaments.reduce((acc, t) => {
+      acc[t.bracketType] = (acc[t.bracketType] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    console.log("\n🎯 Bracket System Testing Coverage:");
+    console.log("   ✅ All 4 bracket types created for comprehensive testing:");
+    Object.entries(bracketTypeCounts).forEach(([type, count]) => {
+      console.log(`      ${type}: ${count} tournaments`);
+    });
+
+    console.log("\n🚀 Ready for bracket system testing!");
+    console.log("   • Single Elimination: Basic bracket progression");
+    console.log("   • Double Elimination: Winners/losers brackets");
+    console.log("   • Round Robin: Berger tables with optimal pairing");
+    console.log("   • Swiss System: Score-based pairing algorithms");
   } catch (error) {
     console.error("❌ Seeding failed:", error);
     throw error;
@@ -707,6 +755,9 @@ async function createUsers(institutions: any[]) {
     users.push(user);
   }
 
+  // Note: Game statistics are created in createGameStatistics function
+  // to avoid duplicate creation and ensure proper data consistency
+
   return users;
 }
 
@@ -720,6 +771,102 @@ async function createTournaments(games: any[], users: any[]) {
     totalTournaments * SEED_CONFIG.TOURNAMENTS.COMPLETED_PERCENTAGE
   );
   const openCount = totalTournaments - activeCount - completedCount;
+
+  // Ensure we create at least one tournament of each bracket type for testing
+  const bracketTypes = [
+    "SINGLE_ELIMINATION",
+    "DOUBLE_ELIMINATION",
+    "ROUND_ROBIN",
+    "SWISS",
+  ];
+
+  console.log("🎯 Creating comprehensive bracket type coverage...");
+
+  // Create one tournament of each bracket type for testing
+  for (let i = 0; i < bracketTypes.length; i++) {
+    const bracketType = bracketTypes[i];
+    const playerCount = randomChoice(SEED_CONFIG.BRACKET_TESTING.PLAYER_COUNTS);
+    const useAdvancedSeeding =
+      Math.random() < SEED_CONFIG.TOURNAMENTS.ADVANCED_SEEDING_PERCENTAGE;
+
+    const seedingConfig = useAdvancedSeeding
+      ? {
+          includePerformance: Math.random() < 0.8,
+          includeHistory: Math.random() < 0.7,
+          includeRegional: Math.random() < 0.6,
+          includeConsistency: Math.random() < 0.5,
+          performanceWeight:
+            SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.PERFORMANCE,
+          historyWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.HISTORY,
+          regionalWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.REGIONAL,
+          consistencyWeight:
+            SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.CONSISTENCY,
+          ratingWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.RATING,
+          recentTournaments: randomInt(
+            SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[0],
+            SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[1]
+          ),
+          regionalRadius: randomInt(
+            SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[0],
+            SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[1]
+          ),
+        }
+      : null;
+
+    const tournament = await prisma.tournament.create({
+      data: {
+        title: `Test ${bracketType} Tournament - ${new Date().getFullYear()}`,
+        description: `Comprehensive testing tournament for ${bracketType} bracket system with ${
+          useAdvancedSeeding ? "advanced" : "basic"
+        } seeding.`,
+        prizePool: randomFloat(500, 2000),
+        entryFee: randomFloat(20, 100),
+        maxPlayers: playerCount,
+        currentPlayers: Math.min(randomInt(8, playerCount), playerCount),
+        status: "OPEN",
+        province: randomChoice(ZIMBABWE_DATA.PROVINCES),
+        city: randomChoice(ZIMBABWE_DATA.CITIES.Harare),
+        location: "Harare, Zimbabwe",
+        venue: randomChoice(SEED_CONFIG.CHESS.VENUES),
+        isOnlineOnly: Math.random() < 0.7,
+        targetAudience: randomChoice(["university", "corporate", "public"]),
+        sponsorName: randomChoice([
+          "Econet",
+          "CBZ Bank",
+          "Delta Corporation",
+          "NetOne",
+          null,
+        ]),
+        minimumAge: randomChoice([13, 16, 18, null]),
+        maxAge: randomChoice([25, 35, 50, null]),
+        category: randomChoice([
+          "UNIVERSITY",
+          "CORPORATE",
+          "PUBLIC",
+          "INVITATION_ONLY",
+        ]),
+        difficultyLevel: randomChoice(["beginner", "intermediate", "advanced"]),
+        prizeBreakdown: {
+          "1st": randomFloat(200, 1000),
+          "2nd": randomFloat(100, 500),
+          "3rd": randomFloat(50, 250),
+          "4th": randomFloat(25, 100),
+        },
+        localCurrency: "USD",
+        platformFeeRate: 0.2,
+        registrationStart: new Date(),
+        registrationEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        startDate: new Date(Date.now() + 31 * 24 * 60 * 60 * 1000),
+        endDate: new Date(Date.now() + 38 * 24 * 60 * 60 * 1000),
+        gameId: games[0].id,
+        bracketType: bracketType as any, // Cast to any to avoid type issues in seeding
+        bracket: generateBracketStructure(playerCount),
+      },
+    });
+
+    console.log(`✅ Created ${bracketType} tournament: ${tournament.title}`);
+    tournaments.push(tournament);
+  }
 
   const now = new Date();
   const oneYearAgo = new Date(now.getFullYear() - 1, 0, 1);
@@ -866,7 +1013,7 @@ async function createTournaments(games: any[], users: any[]) {
           "DOUBLE_ELIMINATION",
           "ROUND_ROBIN",
           "SWISS",
-        ]),
+        ]) as any,
         bracket: generateBracketStructure(randomChoice([16, 32])),
       },
     });
@@ -946,7 +1093,7 @@ async function createTournaments(games: any[], users: any[]) {
           "DOUBLE_ELIMINATION",
           "ROUND_ROBIN",
           "SWISS",
-        ]),
+        ]) as any,
         bracket: generateBracketStructure(randomChoice([32, 64, 128])),
       },
     });

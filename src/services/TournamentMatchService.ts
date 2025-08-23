@@ -58,10 +58,151 @@ export class TournamentMatchService {
       },
     });
 
+    // Update the bracket structure to show the winner
+    await this.updateBracketAfterMatch(
+      match.tournamentId!,
+      matchId,
+      data.winnerId!
+    );
+
     // Advance winner to next round
     await this.advanceWinner(matchId);
 
     logger.info(`Match ${matchId} completed, winner ${data.winnerId} advanced`);
+  }
+
+  /**
+   * Complete a tournament match and advance the winner
+   */
+  static async completeMatch(
+    matchId: string,
+    winnerId: string,
+    gameData?: any
+  ): Promise<void> {
+    try {
+      // Get the match with tournament info
+      const match = await prisma.match.findUnique({
+        where: { id: matchId },
+        include: {
+          tournament: true,
+          player1: true,
+          player2: true,
+        },
+      });
+
+      if (!match?.tournament) {
+        throw new Error("Match or tournament not found");
+      }
+
+      // Update the match with the result
+      await prisma.match.update({
+        where: { id: matchId },
+        data: {
+          status: "COMPLETED",
+          winnerId,
+          result: winnerId === match.player1Id ? "PLAYER1_WIN" : "PLAYER2_WIN",
+          finishedAt: new Date(),
+          gameData,
+        },
+      });
+
+      // Update the bracket structure
+      await this.updateBracketAfterMatch(
+        match.tournamentId!,
+        matchId,
+        winnerId
+      );
+
+      // Advance winner to next round if not the final round
+      await this.advanceWinner(matchId);
+
+      logger.info(`Match ${matchId} completed, winner ${winnerId} advanced`);
+    } catch (error) {
+      logger.error(`Failed to complete match ${matchId}`, { error });
+      throw error;
+    }
+  }
+
+  /**
+   * Update bracket after a match is completed
+   */
+  private static async updateBracketAfterMatch(
+    tournamentId: string,
+    matchId: string,
+    winnerId: string
+  ): Promise<void> {
+    try {
+      console.log(
+        `🔍 [DEBUG] Updating bracket for tournament ${tournamentId}, match ${matchId}, winner ${winnerId}`
+      );
+
+      // Get the tournament bracket
+      const tournament = await prisma.tournament.findUnique({
+        where: { id: tournamentId },
+        select: { bracket: true },
+      });
+
+      if (!tournament?.bracket) {
+        console.log(
+          `❌ [DEBUG] No bracket found for tournament ${tournamentId}`
+        );
+        return;
+      }
+
+      console.log(
+        `✅ [DEBUG] Found bracket with ${
+          (tournament.bracket as any)?.rounds?.length || 0
+        } rounds`
+      );
+
+      const bracket = tournament.bracket as any;
+
+      // Find the completed match in the bracket
+      let bracketMatch = null;
+      for (const round of bracket.rounds) {
+        for (const bm of round.matches) {
+          if (bm.id === matchId) {
+            bracketMatch = bm;
+            console.log(
+              `✅ [DEBUG] Found match in bracket: round ${round.round}, match ${bm.matchNumber}`
+            );
+            break;
+          }
+        }
+        if (bracketMatch) break;
+      }
+
+      if (bracketMatch) {
+        // Update the completed match
+        bracketMatch.winnerId = winnerId;
+        bracketMatch.status = "COMPLETED";
+
+        console.log(
+          `✅ [DEBUG] Updated bracket match: winnerId=${bracketMatch.winnerId}, status=${bracketMatch.status}`
+        );
+
+        // Update the tournament bracket in database
+        await prisma.tournament.update({
+          where: { id: tournamentId },
+          data: { bracket: bracket as any },
+        });
+
+        console.log(`✅ [DEBUG] Bracket saved to database`);
+
+        logger.info(
+          `Updated bracket for tournament ${tournamentId} after match ${matchId} completion`
+        );
+      } else {
+        console.log(`❌ [DEBUG] Match ${matchId} not found in bracket`);
+      }
+    } catch (error) {
+      console.error(`❌ [DEBUG] Error updating bracket:`, error);
+      logger.error(
+        `Failed to update bracket after match ${matchId} completion`,
+        { error }
+      );
+      throw error;
+    }
   }
 
   /**
@@ -108,7 +249,7 @@ export class TournamentMatchService {
     winnerId: string,
     bracket: BracketStructure
   ): Promise<void> {
-    const round = bracket.rounds.find((r) => r.roundNumber === roundNumber);
+    const round = bracket.rounds.find((r) => r.round === roundNumber);
     if (!round) {
       logger.warn(
         `Round ${roundNumber} not found in bracket for tournament ${tournamentId}`
@@ -116,48 +257,100 @@ export class TournamentMatchService {
       return;
     }
 
-    // Find the next available match slot
-    const availableMatch = round.matches.find(
-      (m) => m.player1Id === null || m.player2Id === null
+    // Find the winner's match from the previous round
+    const winnerMatch = await prisma.match.findFirst({
+      where: {
+        tournamentId,
+        round: roundNumber - 1,
+        winnerId,
+      },
+    });
+
+    if (!winnerMatch) {
+      logger.warn(`Winner match not found for round ${roundNumber - 1}`);
+      return;
+    }
+
+    // Get all matches from the previous round to calculate match number
+    const previousRoundMatches = await prisma.match.findMany({
+      where: {
+        tournamentId,
+        round: roundNumber - 1,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // Find the position of the winner's match in the previous round
+    const winnerMatchIndex = previousRoundMatches.findIndex(
+      (m) => m.id === winnerMatch.id
+    );
+    if (winnerMatchIndex === -1) {
+      logger.warn(`Winner match not found in previous round matches`);
+      return;
+    }
+
+    // Calculate which match in the next round this winner should advance to
+    const nextMatchNumber = Math.ceil((winnerMatchIndex + 1) / 2);
+    const nextMatch = round.matches.find(
+      (m) => m.matchNumber === nextMatchNumber
     );
 
-    if (availableMatch) {
-      // Update the bracket with the winner
-      if (availableMatch.player1Id === null) {
-        availableMatch.player1Id = winnerId;
-        availableMatch.player1Seed = this.getPlayerSeed(winnerId, bracket);
-      } else {
-        availableMatch.player2Id = winnerId;
-        availableMatch.player2Seed = this.getPlayerSeed(winnerId, bracket);
-      }
+    if (!nextMatch) {
+      logger.warn(
+        `Next match not found in bracket for round ${roundNumber}, match ${nextMatchNumber}`
+      );
+      return;
+    }
 
-      // Update bracket in database
-      await prisma.tournament.update({
-        where: { id: tournamentId },
-        data: { bracket: bracket as any },
+    // Update the bracket with the winner
+    if (nextMatch.player1Id === null) {
+      nextMatch.player1Id = winnerId;
+      nextMatch.player1Seed = this.getPlayerSeed(winnerId, bracket);
+    } else if (nextMatch.player2Id === null) {
+      nextMatch.player2Id = winnerId;
+      nextMatch.player2Seed = this.getPlayerSeed(winnerId, bracket);
+    } else {
+      logger.warn(
+        `Both player slots are filled for match ${nextMatch.id} in round ${roundNumber}`
+      );
+      return;
+    }
+
+    // Update bracket in database
+    await prisma.tournament.update({
+      where: { id: tournamentId },
+      data: { bracket: bracket as any },
+    });
+
+    // Create the actual match if both players are now known
+    if (nextMatch.player1Id && nextMatch.player2Id) {
+      // Get tournament to get gameId
+      const tournament = await prisma.match.findUnique({
+        where: { id: winnerMatch.id },
+        select: { gameId: true },
       });
 
-      // Create the actual match if both players are now known
-      if (availableMatch.player1Id && availableMatch.player2Id) {
-        // Get tournament to get gameId
-        const tournament = await prisma.tournament.findUnique({
-          where: { id: tournamentId },
-          select: { gameId: true },
+      if (tournament?.gameId) {
+        const newMatch = await prisma.match.create({
+          data: {
+            player1Id: nextMatch.player1Id,
+            player2Id: nextMatch.player2Id,
+            gameId: tournament.gameId,
+            tournamentId: tournamentId,
+            round: roundNumber,
+            status: "PENDING",
+            result: "PENDING",
+          },
         });
 
-        if (tournament) {
-          await prisma.match.create({
-            data: {
-              player1Id: availableMatch.player1Id,
-              player2Id: availableMatch.player2Id,
-              gameId: tournament.gameId,
-              tournamentId: tournamentId,
-              round: roundNumber,
-              status: "PENDING",
-              result: "PENDING",
-            },
-          });
-        }
+        // Update the bracket match with the actual match ID
+        nextMatch.id = newMatch.id;
+
+        // Update bracket again with the match ID
+        await prisma.tournament.update({
+          where: { id: tournamentId },
+          data: { bracket: bracket as any },
+        });
 
         logger.info(
           `Created round ${roundNumber} match for tournament ${tournamentId}`
@@ -373,5 +566,69 @@ export class TournamentMatchService {
       currentRound,
       nextRoundReady,
     };
+  }
+
+  /**
+   * Get tournament winners and final standings
+   */
+  static async getTournamentWinners(tournamentId: string): Promise<{
+    winner?: { userId: string; username: string; prize?: number };
+    runnerUp?: { userId: string; username: string; prize?: number };
+    thirdPlace?: { userId: string; username: string; prize?: number };
+    isCompleted: boolean;
+  }> {
+    try {
+      const tournament = await prisma.tournament.findUnique({
+        where: { id: tournamentId },
+        include: {
+          matches: {
+            where: { status: "COMPLETED" },
+            orderBy: { round: "desc" },
+          },
+          players: {
+            include: { user: true },
+          },
+        },
+      });
+
+      if (!tournament) {
+        throw new Error("Tournament not found");
+      }
+
+      // Check if tournament is completed
+      const isCompleted = tournament.status === "COMPLETED";
+      if (!isCompleted) {
+        return { isCompleted: false };
+      }
+
+      // Get the final match (highest round)
+      const finalMatch = tournament.matches[0]; // Already ordered by round desc
+      if (!finalMatch?.winnerId) {
+        return { isCompleted: true };
+      }
+
+      // Get winner info
+      const winner = tournament.players.find(
+        (p) => p.userId === finalMatch.winnerId
+      );
+      if (!winner) {
+        return { isCompleted: true };
+      }
+
+      // For now, return basic winner info
+      // In a full implementation, you'd calculate prizes and find runner-up/third place
+      return {
+        winner: {
+          userId: winner.userId,
+          username: winner.user.username,
+        },
+        isCompleted: true,
+      };
+    } catch (error) {
+      logger.error(`Failed to get tournament winners for ${tournamentId}`, {
+        error,
+      });
+      throw error;
+    }
   }
 }
