@@ -18,6 +18,7 @@ const router = Router();
 router.get(
   "/",
   validateQuery(schemas.pagination),
+  optionalAuth,
   asyncHandler(async (req: Request, res: Response) => {
     const {
       page = 1,
@@ -60,56 +61,57 @@ router.get(
     // Get tournaments with counts
     const [tournaments, total] = await Promise.all([
       prisma.tournament.findMany({
-        skip,
-        take: limitNumber,
         where,
-        orderBy: {
-          [sortBy]: sortOrder,
-        },
         include: {
           game: {
             select: {
               id: true,
               name: true,
               emoji: true,
-              minPlayers: true,
-              maxPlayers: true,
             },
           },
           _count: {
             select: {
               players: true,
-              matches: true,
             },
           },
         },
+        orderBy: { [sortBy]: sortOrder.toLowerCase() },
+        skip,
+        take: limitNumber,
       }),
       prisma.tournament.count({ where }),
     ]);
 
-    // Calculate pagination
-    const totalPages = Math.ceil(total / limitNumber);
-    const hasNextPage = pageNumber < totalPages;
-    const hasPreviousPage = pageNumber > 1;
+    // If user is authenticated, check which tournaments they've joined
+    let userTournaments: string[] = [];
+    if (req.user?.id) {
+      const userRegistrations = await prisma.tournamentPlayer.findMany({
+        where: { userId: req.user.id },
+        select: { tournamentId: true },
+      });
+      userTournaments = userRegistrations.map((r) => r.tournamentId);
+    }
+
+    // Transform tournaments to include user registration info
+    const tournamentsWithUserInfo = tournaments.map((tournament) => ({
+      ...tournament,
+      userRegistration: userTournaments.includes(tournament.id)
+        ? { joined: true }
+        : null,
+    }));
 
     res.json({
       success: true,
       data: {
-        tournaments: tournaments.map((tournament) => ({
-          ...tournament,
-          stats: {
-            totalPlayers: tournament._count.players,
-            totalMatches: tournament._count.matches,
-            spotsRemaining: tournament.maxPlayers - tournament.currentPlayers,
-          },
-        })),
+        tournaments: tournamentsWithUserInfo,
         pagination: {
-          currentPage: pageNumber,
-          totalPages,
-          totalItems: total,
-          hasNextPage,
-          hasPreviousPage,
+          page: pageNumber,
           limit: limitNumber,
+          total,
+          totalPages: Math.ceil(total / limitNumber),
+          hasNext: pageNumber < Math.ceil(total / limitNumber),
+          hasPrev: pageNumber > 1,
         },
       },
     });
