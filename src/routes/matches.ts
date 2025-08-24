@@ -5,6 +5,7 @@ import {
   validateSchema,
   validateQuery,
   validateParams,
+  paramSchemas,
 } from "../middleware/validation";
 import { asyncHandler } from "../middleware/errorHandler";
 import Joi from "joi";
@@ -240,6 +241,14 @@ router.get(
             status: true,
             province: true,
             city: true,
+          },
+        },
+        sessions: {
+          where: { isActive: true },
+          select: {
+            id: true,
+            userId: true,
+            sessionType: true,
           },
         },
       },
@@ -763,6 +772,231 @@ router.get(
           hasNext: Number(page) < totalPages,
           hasPrev: Number(page) > 1,
         },
+      },
+    });
+  })
+);
+
+/**
+ * @route POST /api/matches/:id/start
+ * @desc Start a tournament match by creating game sessions and updating status
+ * @access Private (only match participants)
+ */
+router.post(
+  "/:id/start",
+  authenticate,
+  validateParams(paramSchemas.id),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id: matchId } = req.params;
+    const userId = req.user!.id;
+
+    // Get the match with tournament and player information
+    const match = await prisma.match.findUnique({
+      where: { id: matchId },
+      include: {
+        tournament: {
+          select: {
+            id: true,
+            status: true,
+            title: true,
+          },
+        },
+        player1: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+        player2: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+        game: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        sessions: {
+          where: { isActive: true },
+          select: {
+            id: true,
+            userId: true,
+            sessionType: true,
+          },
+        },
+      },
+    });
+
+    if (!match) {
+      return res.status(404).json({
+        success: false,
+        message: "Match not found",
+      });
+    }
+
+    // Verify this is a tournament match
+    if (!match.tournamentId) {
+      return res.status(400).json({
+        success: false,
+        message: "This endpoint is only for tournament matches",
+      });
+    }
+
+    // Verify the user is a participant
+    if (match.player1Id !== userId && match.player2Id !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not a participant in this match",
+      });
+    }
+
+    // Check if match is in correct status
+    if (match.status !== "PENDING") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot start match in ${match.status} status. Match must be in PENDING status to start.`,
+        currentStatus: match.status,
+        matchId: matchId,
+      });
+    }
+
+    // Check if tournament allows match play (ACTIVE, CLOSED, or COMPLETED with pending matches)
+    if (
+      match.tournament?.status !== "ACTIVE" &&
+      match.tournament?.status !== "CLOSED" &&
+      match.tournament?.status !== "COMPLETED"
+    ) {
+      logger.warn("Tournament match start blocked due to tournament status", {
+        service: "nhandare-backend",
+        matchId,
+        tournamentId: match.tournamentId,
+        tournamentStatus: match.tournament?.status,
+        userId,
+        allowedStatuses: ["ACTIVE", "CLOSED", "COMPLETED"],
+      });
+
+      return res.status(400).json({
+        success: false,
+        message: `Tournament is in ${match.tournament?.status} status and cannot start matches`,
+        tournamentStatus: match.tournament?.status,
+        allowedStatuses: ["ACTIVE", "CLOSED", "COMPLETED"],
+      });
+    }
+
+    // For CLOSED or COMPLETED tournaments, verify they have generated brackets (matches)
+    if (
+      match.tournament?.status === "CLOSED" ||
+      match.tournament?.status === "COMPLETED"
+    ) {
+      const matchCount = await prisma.match.count({
+        where: { tournamentId: match.tournamentId },
+      });
+
+      if (matchCount === 0) {
+        logger.warn(
+          `${match.tournament?.status} tournament has no matches - bracket not generated`,
+          {
+            service: "nhandare-backend",
+            matchId,
+            tournamentId: match.tournamentId,
+            tournamentStatus: match.tournament?.status,
+            matchCount,
+            userId,
+          }
+        );
+
+        return res.status(400).json({
+          success: false,
+          message:
+            "Tournament bracket has not been generated yet. Please wait for the tournament to start.",
+          tournamentStatus: match.tournament?.status,
+          matchCount,
+        });
+      }
+    }
+
+    // Check if match already has active sessions
+    if (match.sessions.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Match already has active sessions",
+      });
+    }
+
+    // Create game sessions for both players
+    const [player1Session, player2Session] = await Promise.all([
+      prisma.gameSession.create({
+        data: {
+          userId: match.player1Id,
+          gameId: match.gameId,
+          sessionType: "TOURNAMENT",
+          matchId: match.id,
+          isActive: true,
+          startedAt: new Date(),
+        },
+      }),
+      prisma.gameSession.create({
+        data: {
+          userId: match.player2Id,
+          gameId: match.gameId,
+          sessionType: "TOURNAMENT",
+          matchId: match.id,
+          isActive: true,
+          startedAt: new Date(),
+        },
+      }),
+    ]);
+
+    // Update match status to ACTIVE
+    await prisma.match.update({
+      where: { id: matchId },
+      data: {
+        status: "ACTIVE",
+        startedAt: new Date(),
+      },
+    });
+
+    // Get the current user's session ID
+    const currentUserSession =
+      match.player1Id === userId ? player1Session : player2Session;
+
+    logger.info("Tournament match started", {
+      service: "nhandare-backend",
+      matchId,
+      tournamentId: match.tournamentId,
+      tournamentTitle: match.tournament?.title,
+      player1Id: match.player1Id,
+      player2Id: match.player2Id,
+      gameName: match.game?.name,
+      gameSessionIds: [player1Session.id, player2Session.id],
+    });
+
+    // Emit WebSocket event for real-time updates
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`tournament:${match.tournamentId}`).emit(
+        "tournament:match_started",
+        {
+          matchId,
+          tournamentId: match.tournamentId,
+          gameSessionIds: [player1Session.id, player2Session.id],
+          startedAt: new Date().toISOString(),
+        }
+      );
+    }
+
+    res.json({
+      success: true,
+      message: "Tournament match started successfully",
+      data: {
+        matchId,
+        gameSessionId: currentUserSession.id,
+        playerColor: match.player1Id === userId ? "white" : "black",
+        tournamentId: match.tournamentId,
+        gameName: match.game?.name,
       },
     });
   })

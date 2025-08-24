@@ -4,7 +4,16 @@ module.exports = {
   roots: ["<rootDir>/src", "<rootDir>/tests"],
   testMatch: ["**/__tests__/**/*.ts", "**/?(*.)+(spec|test).ts"],
   transform: {
-    "^.+\\.ts$": "ts-jest",
+    "^.+\\.ts$": [
+      "ts-jest",
+      {
+        tsconfig: "tsconfig.test.json",
+      },
+    ],
+  },
+  transformIgnorePatterns: ["node_modules/(?!(pesepayclient)/)"],
+  moduleNameMapper: {
+    "^pesepayclient$": "<rootDir>/tests/__mocks__/pesepayclient.ts",
   },
   collectCoverageFrom: [
     "src/**/*.ts",

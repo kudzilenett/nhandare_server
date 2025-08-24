@@ -1,6 +1,6 @@
-# Chess-Focused Zimbabwean Nhandare Seeder
+# Main Seeder for Nhandare Gaming Platform
 
-This is a comprehensive, production-ready seeder for the Nhandare Chess platform that follows industry best practices and creates realistic test data specifically for chess tournaments and Zimbabwean users.
+This is a comprehensive, production-ready seeder for the Nhandare gaming platform that follows industry best practices and creates realistic test data specifically for chess tournaments and Zimbabwean users.
 
 ## 🚀 Features
 
@@ -132,10 +132,10 @@ npm run db:generate
 
 ```bash
 # Using ts-node
-npx ts-node prisma/seed-industry-standard.ts
+npx ts-node prisma/seed.ts
 
 # Or add to package.json scripts
-npm run seed:industry-standard
+npm run seed
 ```
 
 ### **Customization**
@@ -143,7 +143,7 @@ npm run seed:industry-standard
 ```bash
 # Modify SEED_CONFIG in the file to adjust data volumes
 # Then run the seeder
-npx ts-node prisma/seed-industry-standard.ts
+npx ts-node prisma/seed.ts
 ```
 
 ## 📈 Data Volumes

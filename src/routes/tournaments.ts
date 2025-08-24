@@ -231,6 +231,7 @@ router.post(
       startDate,
       endDate,
       bracketType,
+      bracketConfig,
     } = req.body;
 
     // Verify game exists
@@ -290,11 +291,31 @@ router.post(
         startDate: new Date(startDate),
         endDate: endDate ? new Date(endDate) : null,
         bracketType: bracketType || "SINGLE_ELIMINATION",
+        bracketConfig: bracketConfig || null,
       },
       include: {
         game: true,
       },
     });
+
+    // Emit tournament creation event for frontend notification scheduling
+    try {
+      const EventBus = (await import("../utils/EventBus")).default;
+      EventBus.emitTournamentEvent("tournament:created", {
+        tournamentId: tournament.id,
+        tournamentName: tournament.title,
+        startDate: tournament.startDate,
+        gameName: tournament.game.name,
+        maxPlayers: tournament.maxPlayers,
+        entryFee: tournament.entryFee,
+        prizePool: tournament.prizePool,
+      });
+    } catch (error) {
+      logger.warn("Failed to emit tournament creation event", {
+        tournamentId: tournament.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     logger.info("Tournament created", {
       service: "nhandare-backend",
@@ -542,41 +563,66 @@ router.get(
           bracket.rounds.forEach((round: any) => {
             if (round.matches && Array.isArray(round.matches)) {
               round.matches.forEach((bracketMatch: any) => {
-                // Find corresponding database match by round and match position
-                const roundMatches = tournament.matches.filter(
-                  (m) => m.round === round.round
-                );
+                if (round.round === 1) {
+                  // For first round, populate from bracket data and add player info
+                  if (bracketMatch.player1Id) {
+                    const player1 = tournament.players.find(
+                      (p) => p.user.id === bracketMatch.player1Id
+                    );
+                    if (player1) {
+                      bracketMatch.player1Info = {
+                        id: player1.user.id,
+                        username: player1.user.username,
+                        avatar: player1.user.avatar,
+                      };
+                    }
+                  }
 
-                // Try to find match by ID first, then by position
-                let dbMatch = null;
-                if (
-                  bracketMatch.id &&
-                  bracketMatch.id !==
-                    `round${round.round}_match${bracketMatch.matchNumber}`
-                ) {
-                  // If bracket has a real match ID, find it directly
-                  dbMatch = roundMatches.find((m) => m.id === bracketMatch.id);
+                  if (bracketMatch.player2Id) {
+                    const player2 = tournament.players.find(
+                      (p) => p.user.id === bracketMatch.player2Id
+                    );
+                    if (player2) {
+                      bracketMatch.player2Info = {
+                        id: player2.user.id,
+                        username: player2.user.username,
+                        avatar: player2.user.avatar,
+                      };
+                    }
+                  }
+
+                  // Find corresponding database match
+                  const roundMatches = tournament.matches.filter(
+                    (m) => m.round === round.round
+                  );
+
+                  // Try to find match by ID first, then by position
+                  let dbMatch = null;
+                  if (
+                    bracketMatch.id &&
+                    bracketMatch.id !==
+                      `round${round.round}_match${bracketMatch.matchNumber}`
+                  ) {
+                    // If bracket has a real match ID, find it directly
+                    dbMatch = roundMatches.find(
+                      (m) => m.id === bracketMatch.id
+                    );
+                  } else {
+                    // Find by position in round
+                    const matchIndex = bracketMatch.matchNumber
+                      ? bracketMatch.matchNumber - 1
+                      : 0;
+                    dbMatch = roundMatches[matchIndex];
+                  }
+
+                  if (dbMatch) {
+                    // Populate bracket match with actual data
+                    bracketMatch.id = dbMatch.id;
+                    bracketMatch.status = dbMatch.status;
+                    bracketMatch.winnerId = dbMatch.winnerId;
+                    bracketMatch.createdAt = dbMatch.createdAt;
+                  }
                 } else {
-                  // Find by position in round
-                  const matchIndex = bracketMatch.matchNumber
-                    ? bracketMatch.matchNumber - 1
-                    : 0;
-                  dbMatch = roundMatches[matchIndex];
-                }
-
-                if (dbMatch) {
-                  // Populate bracket match with actual data
-                  bracketMatch.id = dbMatch.id;
-                  bracketMatch.player1Id = dbMatch.player1?.id || null;
-                  bracketMatch.player2Id = dbMatch.player2?.id || null;
-                  bracketMatch.status = dbMatch.status;
-                  bracketMatch.winnerId = dbMatch.winnerId;
-                  bracketMatch.createdAt = dbMatch.createdAt;
-
-                  // Add player info for display
-                  bracketMatch.player1Info = dbMatch.player1;
-                  bracketMatch.player2Info = dbMatch.player2;
-                } else if (round.round > 1) {
                   // For subsequent rounds, try to populate from previous round winners
                   // This is a simplified approach - in production you'd want a more sophisticated winner advancement system
                   bracketMatch.status = "PENDING";
@@ -722,6 +768,15 @@ router.put(
     }
     if (updateData.registrationEnd) {
       updateData.registrationEnd = new Date(updateData.registrationEnd);
+    }
+
+    // Handle useAdvancedSeeding field by moving it to bracketConfig
+    if (updateData.useAdvancedSeeding !== undefined) {
+      updateData.bracketConfig = {
+        ...(updateData.bracketConfig || {}),
+        useAdvancedSeeding: updateData.useAdvancedSeeding,
+      };
+      delete updateData.useAdvancedSeeding;
     }
 
     const updatedTournament = await prisma.tournament.update({

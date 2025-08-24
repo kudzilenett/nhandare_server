@@ -32,7 +32,7 @@ const TESTING_STEPS: TestStep[] = [
     name: "comprehensive_seeding",
     description: "Run comprehensive testing seeder",
     command: "npx",
-    args: ["ts-node", "--esm", "prisma/seed-comprehensive-testing.ts"],
+    args: ["ts-node", "--esm", "prisma/seed.ts"],
     timeout: 300000, // 5 minutes
   },
   {

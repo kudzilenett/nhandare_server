@@ -386,6 +386,28 @@ export const schemas = {
       .string()
       .valid("SINGLE_ELIMINATION", "DOUBLE_ELIMINATION", "ROUND_ROBIN", "SWISS")
       .default("SINGLE_ELIMINATION"),
+
+    // Advanced seeding configuration
+    bracketConfig: joi
+      .object({
+        useAdvancedSeeding: joi.boolean().default(false),
+        seedingOptions: joi
+          .object({
+            includePerformance: joi.boolean().default(true),
+            includeHistory: joi.boolean().default(true),
+            includeRegional: joi.boolean().default(false),
+            includeConsistency: joi.boolean().default(true),
+            performanceWeight: joi.number().min(0).max(1).default(0.4),
+            historyWeight: joi.number().min(0).max(1).default(0.3),
+            regionalWeight: joi.number().min(0).max(1).default(0.1),
+            consistencyWeight: joi.number().min(0).max(1).default(0.2),
+            ratingWeight: joi.number().min(0).max(1).default(0.5),
+            recentTournaments: joi.number().integer().min(1).default(10),
+            regionalRadius: joi.number().min(0).default(100),
+          })
+          .optional(),
+      })
+      .optional(),
   }),
 
   // Admin user management schemas

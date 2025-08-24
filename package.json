@@ -34,17 +34,12 @@
     "pm2:stop": "pm2 stop ecosystem.config.js",
     "pm2:logs": "pm2 logs",
     "deploy": "npm run build && npm run start:prod",
-    "seed:active-tournament": "npx tsx prisma/seed-active-tournament.ts",
-    "seed:industry-standard": "npx tsx prisma/seed-industry-standard.ts",
-    "seed:reset": "npm run db:reset && npm run seed:industry-standard",
-    "seed:test": "npx tsx prisma/seed-industry-standard.ts --test",
+    "seed:reset": "npm run db:reset && npm run seed",
+    "seed:test": "npm run seed -- --test",
     "test:seeding": "node test-seeding.js",
     "verify:brackets": "node verify-brackets.js",
-    "seed:comprehensive": "npx tsx prisma/seed-comprehensive-testing.ts",
     "test:brackets": "npx tsx scripts/test-bracket-generation.ts",
-    "test:comprehensive": "npx tsx scripts/run-comprehensive-testing.ts",
-    "validate:database": "npx tsx scripts/validate-database.ts",
-    "launch:prep": "npm run test:comprehensive"
+    "validate:database": "npx tsx scripts/validate-database.ts"
   },
   "keywords": [
     "gaming",

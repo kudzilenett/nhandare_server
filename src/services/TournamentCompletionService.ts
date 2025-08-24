@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import logger from "../config/logger";
+import EventBus from "../utils/EventBus";
 import { roundToCents } from "../utils/currency";
 
 const prisma = new PrismaClient();
@@ -530,6 +531,20 @@ export class TournamentCompletionService {
           placement: w.placement,
           prize: w.prizeAmount,
         })),
+      });
+
+      // Emit tournament completion event
+      EventBus.emitTournamentEvent("tournament:completed", {
+        tournamentId,
+        tournamentName: tournament.title,
+        winners: winners.map((w) => ({
+          userId: w.userId,
+          username: w.username,
+          placement: w.placement,
+          prizeAmount: w.prizeAmount,
+        })),
+        completedAt: new Date(),
+        totalPlayers: tournament.players.length,
       });
 
       return {

@@ -124,6 +124,7 @@ model Tournament {
   gameId               String
   bracketType          BracketType             @default(SINGLE_ELIMINATION)
   bracket              Json?
+  bracketConfig        Json?
   createdAt            DateTime                @default(now())
   updatedAt            DateTime                @updatedAt
   matches              Match[]

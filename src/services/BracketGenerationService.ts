@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import logger from "../config/logger";
+import EventBus from "../utils/EventBus";
 
 // Define the bracket type enum locally to match Prisma schema
 type BracketType =
@@ -1416,15 +1417,16 @@ export class BracketGenerationService {
 
       if (firstRound) {
         for (const match of firstRound.matches) {
-          // Only create matches that have actual players (not byes)
-          if (match.player1Id && match.player2Id && !match.isBye) {
+          // Create matches for all first round games, including byes
+          // For bye matches, we still want to create the match to track progression
+          if (match.player1Id || match.player2Id) {
             matches.push({
               player1Id: match.player1Id,
               player2Id: match.player2Id,
               gameId: tournament.gameId,
               tournamentId,
               round: 1,
-              status: "PENDING",
+              status: match.isBye ? "WAITING" : "PENDING",
               result: "PENDING",
             });
           }
@@ -1442,6 +1444,23 @@ export class BracketGenerationService {
 
         // Update bracket with actual match IDs for first round only
         await this.updateBracketWithMatchIds(tournamentId, bracket);
+
+        // Emit match_available events for all created matches
+        const tournament = await prisma.tournament.findUnique({
+          where: { id: tournamentId },
+          select: { title: true },
+        });
+
+        for (const match of matches) {
+          EventBus.emitTournamentEvent("tournament:match_available", {
+            matchId: match.id || `temp_${Date.now()}_${Math.random()}`,
+            tournamentId,
+            tournamentName: tournament?.title || "Tournament",
+            player1Id: match.player1Id,
+            player2Id: match.player2Id,
+            round: match.round,
+          });
+        }
 
         logger.info(
           `Created ${matches.length} first-round matches for tournament ${tournamentId}`

@@ -1,5 +1,6 @@
 import { PrismaClient, MatchStatus, MatchResult } from "@prisma/client";
 import logger from "../config/logger";
+import EventBus from "../utils/EventBus";
 import {
   BracketGenerationService,
   BracketStructure,
@@ -234,6 +235,15 @@ export class TournamentMatchService {
         match.winnerId,
         bracket
       );
+
+      // Emit round advancement event
+      EventBus.emitTournamentEvent("tournament:round_advanced", {
+        tournamentId: match.tournamentId!,
+        tournamentName: match.tournament.title,
+        currentRound: nextRound,
+        totalRounds: bracket.totalRounds,
+        previousRound: currentRound,
+      });
     } else {
       // Tournament completed
       await this.handleTournamentCompletion(match.tournamentId!);

@@ -1,5 +1,6 @@
 import { PrismaClient, TournamentStatus } from "@prisma/client";
 import logger from "../config/logger";
+import EventBus from "../utils/EventBus";
 
 const prisma = new PrismaClient();
 
@@ -25,6 +26,28 @@ export class TournamentStatusService {
         logger.info(
           `TournamentStatusService: Closed ${closedCount.count} tournaments`
         );
+      }
+
+      // Check for tournaments starting soon (1 hour before start)
+      const startingSoonTournaments = await prisma.tournament.findMany({
+        where: {
+          status: "CLOSED",
+          startDate: {
+            gte: new Date(Date.now() + 60 * 60 * 1000), // 1 hour from now
+            lte: new Date(Date.now() + 61 * 60 * 1000), // 1 hour + 1 minute
+          },
+          currentPlayers: { gte: 2 }, // Minimum players required
+        },
+      });
+
+      // Emit starting soon events
+      for (const tournament of startingSoonTournaments) {
+        EventBus.emitTournamentEvent("tournament:starting_soon", {
+          tournamentId: tournament.id,
+          tournamentName: tournament.title,
+          startDate: tournament.startDate,
+          currentPlayers: tournament.currentPlayers,
+        });
       }
 
       // CLOSED → ACTIVE (tournament start time)
@@ -138,6 +161,17 @@ export class TournamentStatusService {
         where: { id: tournamentId },
         data: { status: "ACTIVE" },
       });
+
+      // Emit tournament started event
+      EventBus.emitTournamentEvent("tournament:started", {
+        tournamentId,
+        tournamentName: tournament.title,
+        startDate: tournament.startDate,
+        currentPlayers: tournament.currentPlayers,
+      });
+
+      // Note: Notification cleanup is handled by the frontend service
+      // when it receives the tournament:started event
 
       // Notify players via WebSocket
       await this.notifyTournamentStart(tournamentId);

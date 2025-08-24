@@ -860,6 +860,40 @@ async function createTournaments(games: any[], users: any[]) {
         endDate: new Date(Date.now() + 38 * 24 * 60 * 60 * 1000),
         gameId: games[0].id,
         bracketType: bracketType as any, // Cast to any to avoid type issues in seeding
+        bracketConfig: {
+          useAdvancedSeeding,
+          seedingOptions: {
+            includePerformance: useAdvancedSeeding,
+            includeHistory: useAdvancedSeeding,
+            includeRegional: useAdvancedSeeding && Math.random() < 0.4,
+            includeConsistency: useAdvancedSeeding && Math.random() < 0.6,
+            performanceWeight: useAdvancedSeeding
+              ? SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.PERFORMANCE
+              : 0,
+            historyWeight: useAdvancedSeeding
+              ? SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.HISTORY
+              : 0,
+            regionalWeight: useAdvancedSeeding
+              ? SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.REGIONAL
+              : 0,
+            consistencyWeight: useAdvancedSeeding
+              ? SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.CONSISTENCY
+              : 0,
+            ratingWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.RATING,
+            recentTournaments: useAdvancedSeeding
+              ? randomInt(
+                  SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[0],
+                  SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[1]
+                )
+              : 0,
+            regionalRadius: useAdvancedSeeding
+              ? randomInt(
+                  SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[0],
+                  SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[1]
+                )
+              : 0,
+          },
+        },
         bracket: generateBracketStructure(playerCount),
       },
     });
@@ -1014,6 +1048,31 @@ async function createTournaments(games: any[], users: any[]) {
           "ROUND_ROBIN",
           "SWISS",
         ]) as any,
+        bracketConfig: {
+          useAdvancedSeeding:
+            Math.random() < SEED_CONFIG.TOURNAMENTS.ADVANCED_SEEDING_PERCENTAGE,
+          seedingOptions: {
+            includePerformance: true,
+            includeHistory: true,
+            includeRegional: Math.random() < 0.4,
+            includeConsistency: Math.random() < 0.6,
+            performanceWeight:
+              SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.PERFORMANCE,
+            historyWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.HISTORY,
+            regionalWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.REGIONAL,
+            consistencyWeight:
+              SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.CONSISTENCY,
+            ratingWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.RATING,
+            recentTournaments: randomInt(
+              SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[0],
+              SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[1]
+            ),
+            regionalRadius: randomInt(
+              SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[0],
+              SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[1]
+            ),
+          },
+        },
         bracket: generateBracketStructure(randomChoice([16, 32])),
       },
     });
@@ -1094,6 +1153,31 @@ async function createTournaments(games: any[], users: any[]) {
           "ROUND_ROBIN",
           "SWISS",
         ]) as any,
+        bracketConfig: {
+          useAdvancedSeeding:
+            Math.random() < SEED_CONFIG.TOURNAMENTS.ADVANCED_SEEDING_PERCENTAGE,
+          seedingOptions: {
+            includePerformance: true,
+            includeHistory: true,
+            includeRegional: Math.random() < 0.4,
+            includeConsistency: Math.random() < 0.6,
+            performanceWeight:
+              SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.PERFORMANCE,
+            historyWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.HISTORY,
+            regionalWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.REGIONAL,
+            consistencyWeight:
+              SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.CONSISTENCY,
+            ratingWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.RATING,
+            recentTournaments: randomInt(
+              SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[0],
+              SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[1]
+            ),
+            regionalRadius: randomInt(
+              SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[0],
+              SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[1]
+            ),
+          },
+        },
         bracket: generateBracketStructure(randomChoice([32, 64, 128])),
       },
     });

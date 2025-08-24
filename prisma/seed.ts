@@ -1,454 +1,96 @@
-/// <reference types="node" />
 import { PrismaClient } from "@prisma/client";
-import {
-  TournamentCategory,
-  AchievementType,
-  TournamentStatus,
-  MatchStatus,
-  MatchResult,
-  PaymentStatus,
-  PaymentType,
-} from "@prisma/client";
-import * as bcrypt from "bcryptjs";
+import { hash } from "bcryptjs";
+import { BracketGenerationService } from "../src/services/BracketGenerationService";
 
 const prisma = new PrismaClient();
 
-// Utility function for rounding to cents
-function roundToCents(amount: number): number {
-  return Math.round(amount * 100) / 100;
-}
+// Industry-standard configuration constants
+const SEED_CONFIG = {
+  USERS: {
+    TOTAL: 100,
+    ADMIN_PERCENTAGE: 0.05, // 5% admins
+    MODERATOR_PERCENTAGE: 0.1, // 10% moderators
+    STUDENT_PERCENTAGE: 0.6, // 60% students
+    VERIFIED_PERCENTAGE: 0.8, // 80% verified
+  },
+  TOURNAMENTS: {
+    TOTAL: 25,
+    ACTIVE_PERCENTAGE: 0.2, // 20% active
+    COMPLETED_PERCENTAGE: 0.6, // 60% completed
+    OPEN_PERCENTAGE: 0.2, // 20% open
+    // Bracket type distribution for comprehensive testing
+    BRACKET_TYPES: {
+      SINGLE_ELIMINATION: 0.4, // 40% - most common
+      DOUBLE_ELIMINATION: 0.25, // 25% - popular for fairness
+      ROUND_ROBIN: 0.2, // 20% - good for small groups
+      SWISS: 0.15, // 15% - efficient for large groups
+    },
+    // Advanced seeding distribution
+    ADVANCED_SEEDING_PERCENTAGE: 0.7, // 70% use advanced seeding
+  },
+  MATCHES: {
+    PER_TOURNAMENT: 15,
+    COMPLETED_PERCENTAGE: 0.8, // 80% completed
+  },
+  PAYMENTS: {
+    SUCCESS_RATE: 0.95, // 95% success rate
+    FAILURE_REASONS: [
+      "Insufficient funds",
+      "Network timeout",
+      "Invalid mobile number",
+      "Provider service unavailable",
+      "Daily limit exceeded",
+    ],
+  },
+  CHESS: {
+    OPENINGS: [
+      "Sicilian Defense",
+      "Ruy Lopez",
+      "Queen's Gambit",
+      "King's Indian Defense",
+      "French Defense",
+      "Caro-Kann Defense",
+      "English Opening",
+      "Reti Opening",
+    ],
+    TIME_CONTROLS: ["5+0", "10+5", "15+10", "30+0", "60+0"],
+    VENUES: [
+      "Online",
+      "Harare International Conference Centre",
+      "University of Zimbabwe",
+      "Bulawayo City Hall",
+      "Africa University",
+      "Mutare City Hall",
+      "Manicaland Provincial Complex",
+      "National University of Science and Technology",
+    ],
+  },
+  // New: Advanced seeding configuration
+  SEEDING: {
+    PERFORMANCE_WEIGHTS: {
+      RATING: 0.4, // Base rating weight
+      PERFORMANCE: 0.25, // Recent performance
+      HISTORY: 0.2, // Tournament history
+      REGIONAL: 0.1, // Regional factors
+      CONSISTENCY: 0.05, // Performance consistency
+    },
+    REGIONAL_RADIUS_RANGE: [50, 200], // km
+    RECENT_TOURNAMENTS_RANGE: [3, 10],
+    CONSISTENCY_SCORE_RANGE: [0.6, 1.0],
+    REGIONAL_STRENGTH_RANGE: [0.5, 1.0],
+  },
+  // New: Bracket testing configuration
+  BRACKET_TESTING: {
+    PLAYER_COUNTS: [8, 16, 32, 64, 128], // Test various tournament sizes
+    ENSURE_ALL_TYPES: true, // Guarantee at least one tournament of each bracket type
+    TEST_ADVANCED_SEEDING: true, // Test advanced seeding configurations
+    VALIDATION_TESTING: true, // Test bracket validation systems
+  },
+};
 
-// Helper function to generate random date within a range
-function randomDate(start: Date, end: Date): Date {
-  return new Date(
-    start.getTime() + Math.random() * (end.getTime() - start.getTime())
-  );
-}
-
-// Helper to generate realistic Zimbabwe phone numbers
-function generateZimbabwePhone(): string {
-  const prefixes = ["263771", "263772", "263773", "263774", "263778"];
-  const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
-  const suffix = Math.floor(Math.random() * 900000) + 100000;
-  return `+${prefix}${suffix}`;
-}
-
-async function main() {
-  console.log("🇿🇼 Seeding comprehensive Zimbabwe gaming platform (2025)...");
-
-  // Clean up existing data (order matters due to foreign key constraints)
-  await prisma.userAchievement.deleteMany();
-  await prisma.achievement.deleteMany();
-  await prisma.tournamentChatMessage.deleteMany();
-  await prisma.challengeInvitation.deleteMany(); // Delete challenge invitations first
-  await prisma.gameStatistic.deleteMany();
-  await prisma.gameSession.deleteMany();
-  await prisma.match.deleteMany();
-  await prisma.tournamentPlayer.deleteMany();
-  await prisma.payment.deleteMany();
-  await prisma.tournament.deleteMany();
-  await prisma.mobileMoneyProvider.deleteMany();
-  await prisma.institution.deleteMany();
-  await prisma.zimbabweLocation.deleteMany();
-  await prisma.game.deleteMany();
-  await prisma.user.deleteMany();
-
-  // 1. Create Zimbabwe locations
-  console.log("📍 Creating Zimbabwe locations...");
-  const locations = [
-    // Major cities with coordinates
-    {
-      province: "Harare",
-      city: "Harare",
-      latitude: -17.8292,
-      longitude: 31.0522,
-    },
-    {
-      province: "Harare",
-      city: "Chitungwiza",
-      latitude: -18.01,
-      longitude: 31.07,
-    },
-    { province: "Harare", city: "Epworth", latitude: -17.89, longitude: 31.15 },
-    { province: "Harare", city: "Norton", latitude: -17.88, longitude: 30.7 },
-    {
-      province: "Bulawayo",
-      city: "Bulawayo",
-      latitude: -20.1594,
-      longitude: 28.5886,
-    },
-    {
-      province: "Bulawayo",
-      city: "Cowdray Park",
-      latitude: -20.12,
-      longitude: 28.55,
-    },
-    {
-      province: "Manicaland",
-      city: "Mutare",
-      latitude: -18.9707,
-      longitude: 32.6473,
-    },
-    {
-      province: "Manicaland",
-      city: "Rusape",
-      latitude: -18.5276,
-      longitude: 32.1254,
-    },
-    {
-      province: "Mashonaland Central",
-      city: "Bindura",
-      latitude: -17.3017,
-      longitude: 31.3314,
-    },
-    {
-      province: "Mashonaland East",
-      city: "Marondera",
-      latitude: -18.1851,
-      longitude: 31.5539,
-    },
-    {
-      province: "Mashonaland West",
-      city: "Chinhoyi",
-      latitude: -17.3667,
-      longitude: 30.2,
-    },
-    {
-      province: "Masvingo",
-      city: "Masvingo",
-      latitude: -20.0637,
-      longitude: 30.8267,
-    },
-    {
-      province: "Matabeleland North",
-      city: "Hwange",
-      latitude: -18.3759,
-      longitude: 26.5019,
-    },
-    {
-      province: "Matabeleland South",
-      city: "Gwanda",
-      latitude: -20.9333,
-      longitude: 29.0167,
-    },
-    {
-      province: "Midlands",
-      city: "Gweru",
-      latitude: -19.4167,
-      longitude: 29.8167,
-    },
-    {
-      province: "Midlands",
-      city: "Kwekwe",
-      latitude: -18.9167,
-      longitude: 29.8167,
-    },
-  ];
-
-  await prisma.zimbabweLocation.createMany({ data: locations });
-
-  // 2. Create institutions
-  console.log("🏫 Creating institutions...");
-  const institutions = [
-    {
-      name: "University of Zimbabwe",
-      type: "university",
-      province: "Harare",
-      city: "Harare",
-    },
-    {
-      name: "National University of Science & Technology",
-      type: "university",
-      province: "Bulawayo",
-      city: "Bulawayo",
-    },
-    {
-      name: "Midlands State University",
-      type: "university",
-      province: "Midlands",
-      city: "Gweru",
-    },
-    {
-      name: "Africa University",
-      type: "university",
-      province: "Manicaland",
-      city: "Mutare",
-    },
-    {
-      name: "Chinhoyi University of Technology",
-      type: "university",
-      province: "Mashonaland West",
-      city: "Chinhoyi",
-    },
-    {
-      name: "Bindura University of Science Education",
-      type: "university",
-      province: "Mashonaland Central",
-      city: "Bindura",
-    },
-    {
-      name: "Great Zimbabwe University",
-      type: "university",
-      province: "Masvingo",
-      city: "Masvingo",
-    },
-    {
-      name: "CBZ Holdings",
-      type: "company",
-      province: "Harare",
-      city: "Harare",
-    },
-    {
-      name: "Econet Wireless",
-      type: "company",
-      province: "Harare",
-      city: "Harare",
-    },
-    {
-      name: "Delta Corporation",
-      type: "company",
-      province: "Harare",
-      city: "Harare",
-    },
-    {
-      name: "OK Zimbabwe",
-      type: "company",
-      province: "Harare",
-      city: "Harare",
-    },
-    {
-      name: "Zimplats",
-      type: "company",
-      province: "Mashonaland West",
-      city: "Chinhoyi",
-    },
-  ];
-
-  await prisma.institution.createMany({ data: institutions });
-
-  // 3. Create mobile money providers
-  console.log("📱 Creating mobile money providers...");
-  const mobileMoneyProviders = [
-    {
-      name: "EcoCash",
-      code: "ECOCASH",
-      isActive: true,
-      minAmount: 0,
-      maxAmount: 10000,
-    },
-    {
-      name: "OneMoney",
-      code: "ONEMONEY",
-      isActive: true,
-      minAmount: 0,
-      maxAmount: 10000,
-    },
-    {
-      name: "Telecash",
-      code: "TELECASH",
-      isActive: true,
-      minAmount: 0,
-      maxAmount: 10000,
-    },
-    {
-      name: "ZimSwitch",
-      code: "ZIMSWITCH",
-      isActive: true,
-      minAmount: 0,
-      maxAmount: 10000,
-    },
-  ];
-
-  await prisma.mobileMoneyProvider.createMany({ data: mobileMoneyProviders });
-
-  // 4. Create games
-  console.log("🎮 Creating games...");
-  const games = [
-    {
-      name: "Chess",
-      description: "Strategic board game for two players",
-      emoji: "♟️",
-      minPlayers: 2,
-      maxPlayers: 2,
-      averageTimeMs: 1800000, // 30 minutes
-      isActive: true,
-      rules: { piece_movement: "standard", time_control: "30+0" },
-      settings: {
-        board_size: "8x8",
-        starting_position: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR",
-      },
-    },
-    {
-      name: "Checkers",
-      description: "Classic strategy game also known as Draughts",
-      emoji: "🔴",
-      minPlayers: 2,
-      maxPlayers: 2,
-      averageTimeMs: 1200000, // 20 minutes
-      isActive: true,
-      rules: { board_size: "8x8", mandatory_capture: true },
-      settings: { variant: "international" },
-    },
-    {
-      name: "Tic Tac Toe",
-      description: "Simple strategy game on a 3x3 grid",
-      emoji: "⭕",
-      minPlayers: 2,
-      maxPlayers: 2,
-      averageTimeMs: 300000, // 5 minutes
-      isActive: true,
-      rules: { board_size: "3x3", win_condition: "3_in_a_row" },
-      settings: { symbols: ["X", "O"] },
-    },
-    {
-      name: "Connect 4",
-      description: "Connect four pieces in a row to win",
-      emoji: "🔵",
-      minPlayers: 2,
-      maxPlayers: 2,
-      averageTimeMs: 900000, // 15 minutes
-      isActive: true,
-      rules: { board_size: "7x6", win_condition: "4_in_a_row" },
-      settings: { gravity: true },
-    },
-  ];
-
-  const createdGames = await Promise.all(
-    games.map((game) => prisma.game.create({ data: game }))
-  );
-
-  // 5. Create comprehensive users (50 users for extensive testing)
-  console.log("👥 Creating comprehensive user profiles...");
-  const userProfiles: any[] = [
-    // Super Admin user
-    {
-      email: "admin@nhandare.co.zw",
-      username: "admin",
-      password: await bcrypt.hash("admin123", 10),
-      firstName: "System",
-      lastName: "Administrator",
-      phoneNumber: generateZimbabwePhone(),
-      province: "Harare",
-      city: "Harare",
-      location: "Harare, Zimbabwe",
-      isActive: true,
-      isVerified: true,
-      points: 10000,
-      rank: 1,
-      role: "super_admin",
-      permissions: [
-        "users:manage",
-        "tournaments:manage",
-        "payments:manage",
-        "games:manage",
-        "analytics:view",
-        "system:configure",
-        "content:moderate",
-      ],
-    },
-    // Regular Admin user
-    {
-      email: "admin.manager@nhandare.co.zw",
-      username: "admin_manager",
-      password: await bcrypt.hash("admin123", 10),
-      firstName: "Admin",
-      lastName: "Manager",
-      phoneNumber: generateZimbabwePhone(),
-      province: "Bulawayo",
-      city: "Bulawayo",
-      location: "Bulawayo, Zimbabwe",
-      isActive: true,
-      isVerified: true,
-      points: 5000,
-      rank: 2,
-      role: "admin",
-      permissions: [
-        "users:manage",
-        "tournaments:manage",
-        "payments:view",
-        "analytics:view",
-      ],
-    },
-    // Moderator user
-    {
-      email: "moderator@nhandare.co.zw",
-      username: "moderator",
-      password: await bcrypt.hash("mod123", 10),
-      firstName: "Content",
-      lastName: "Moderator",
-      phoneNumber: generateZimbabwePhone(),
-      province: "Manicaland",
-      city: "Mutare",
-      location: "Mutare, Zimbabwe",
-      isActive: true,
-      isVerified: true,
-      points: 2500,
-      rank: 10,
-      role: "moderator",
-      permissions: ["content:moderate", "users:view", "tournaments:view"],
-    },
-  ];
-
-  // Generate 49 more realistic users
-  const firstNames = [
-    "Tendai",
-    "Chipo",
-    "Tinashe",
-    "Nyasha",
-    "Blessing",
-    "Tatenda",
-    "Chiedza",
-    "Anesu",
-    "Rutendo",
-    "Farai",
-    "Panashe",
-    "Nokutenda",
-    "Takudzwa",
-    "Chamu",
-    "Rudo",
-    "Simba",
-    "Tafadzwa",
-    "Vimbai",
-    "Chenai",
-    "Mukamuri",
-    "Tapiwanashe",
-    "Fungai",
-    "Tadiwa",
-    "Nyaradzo",
-    "Munyaradzi",
-    "Tariro",
-    "Chengeto",
-    "Tarisai",
-    "Shamiso",
-    "Tawanda",
-  ];
-
-  const lastNames = [
-    "Moyo",
-    "Ncube",
-    "Sibanda",
-    "Dube",
-    "Nyoni",
-    "Mthembu",
-    "Banda",
-    "Phiri",
-    "Mwanza",
-    "Soko",
-    "Mukamuri",
-    "Chigumbura",
-    "Madziwa",
-    "Marowa",
-    "Chidzonga",
-    "Mafukidze",
-    "Musiyiwa",
-    "Mudzingwa",
-    "Chipunza",
-    "Muchena",
-    "Mutapa",
-    "Zimbabwean",
-  ];
-
-  const provinces = [
+// Zimbabwe-specific data
+const ZIMBABWE_DATA = {
+  PROVINCES: [
     "Harare",
     "Bulawayo",
     "Manicaland",
@@ -459,703 +101,2011 @@ async function main() {
     "Matabeleland North",
     "Matabeleland South",
     "Midlands",
-  ];
-  const universitiesAndCompanies = [
-    "University of Zimbabwe",
-    "National University of Science & Technology",
-    "Midlands State University",
-    "CBZ Holdings",
-    "Econet Wireless",
-    "Delta Corporation",
-  ];
-
-  for (let i = 0; i < 49; i++) {
-    const firstName = firstNames[Math.floor(Math.random() * firstNames.length)];
-    const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
-    const province = provinces[Math.floor(Math.random() * provinces.length)];
-    const isStudent = Math.random() < 0.6; // 60% students
-
-    userProfiles.push({
-      email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}${i}@${
-        isStudent ? "student." : ""
-      }nhandare.co.zw`,
-      username: `${firstName.toLowerCase()}_${lastName.toLowerCase()}_${i}`,
-      password: await bcrypt.hash("password123", 10),
-      firstName,
-      lastName,
-      phoneNumber: generateZimbabwePhone(),
-      ecocashNumber: Math.random() < 0.8 ? generateZimbabwePhone() : null,
-      mobileMoneyProvider:
-        Math.random() < 0.8
-          ? Math.random() < 0.7
-            ? "ECOCASH"
-            : "ONEMONEY"
-          : null,
-      province,
-      city:
-        province === "Harare"
-          ? "Harare"
-          : province === "Bulawayo"
-          ? "Bulawayo"
-          : "Main City",
-      location: `${province}, Zimbabwe`,
-      isStudent,
-      institution: isStudent
-        ? universitiesAndCompanies[Math.floor(Math.random() * 3)]
-        : universitiesAndCompanies[
-            Math.floor(Math.random() * universitiesAndCompanies.length)
-          ],
-      dateOfBirth: randomDate(new Date("1990-01-01"), new Date("2005-12-31")),
-      gender: Math.random() < 0.5 ? "male" : "female",
-      isActive: true,
-      isVerified: Math.random() < 0.7, // 70% verified
-      points: Math.floor(Math.random() * 5000) + 100,
-      rank: Math.floor(Math.random() * 1000) + 2,
-      gamesPlayed: Math.floor(Math.random() * 100) + 5,
-      gamesWon: Math.floor(Math.random() * 50) + 2,
-      winRate: Math.random() * 0.6 + 0.2, // 20% to 80% win rate
-      bio: `Gaming enthusiast from ${province}. Love strategic games!`,
-      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${firstName}${lastName}`,
-      role: "user", // Regular users
-      permissions: [], // No special permissions for regular users
-      createdAt: randomDate(new Date("2024-01-01"), new Date("2024-12-31")),
-      lastLogin: randomDate(new Date("2025-01-01"), new Date()),
-    });
-  }
-
-  const createdUsers = await Promise.all(
-    userProfiles.map((user) => prisma.user.create({ data: user }))
-  );
-
-  // 6. Create comprehensive tournaments (20 tournaments in various states)
-  console.log("🏆 Creating comprehensive tournaments...");
-  const currentDate = new Date();
-  const oneWeekAgo = new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const oneWeekFromNow = new Date(
-    currentDate.getTime() + 7 * 24 * 60 * 60 * 1000
-  );
-  const oneMonthFromNow = new Date(
-    currentDate.getTime() + 30 * 24 * 60 * 60 * 1000
-  );
-
-  const tournamentTemplates: any[] = [
-    // Open tournaments
+  ],
+  NAMES: {
+    FIRST_NAMES: [
+      // Shona names
+      "Tatenda",
+      "Tinashe",
+      "Tafadzwa",
+      "Tendai",
+      "Tapiwa",
+      "Tonderai",
+      "Tawanda",
+      "Tendekai",
+      "Rutendo",
+      "Rumbidzai",
+      "Ruvimbo",
+      "Rutendo",
+      "Rumbidzai",
+      "Ruvimbo",
+      "Rutendo",
+      "Rumbidzai",
+      "Farai",
+      "Fadzai",
+      "Fungai",
+      "Fadzai",
+      "Fungai",
+      "Fadzai",
+      "Fungai",
+      "Fadzai",
+      "Chiedza",
+      "Chiedza",
+      "Chiedza",
+      "Chiedza",
+      "Chiedza",
+      "Chiedza",
+      "Chiedza",
+      "Chiedza",
+      "Munashe",
+      "Munyaradzi",
+      "Munashe",
+      "Munyaradzi",
+      "Munashe",
+      "Munyaradzi",
+      "Munashe",
+      "Munyaradzi",
+      // Ndebele names
+      "Sipho",
+      "Sipho",
+      "Sipho",
+      "Sipho",
+      "Sipho",
+      "Sipho",
+      "Sipho",
+      "Sipho",
+      "Thabo",
+      "Thabo",
+      "Thabo",
+      "Thabo",
+      "Thabo",
+      "Thabo",
+      "Thabo",
+      "Thabo",
+      "Nkosana",
+      "Nkosana",
+      "Nkosana",
+      "Nkosana",
+      "Nkosana",
+      "Nkosana",
+      "Nkosana",
+      "Nkosana",
+      // English names common in Zimbabwe
+      "John",
+      "James",
+      "David",
+      "Michael",
+      "Robert",
+      "William",
+      "Richard",
+      "Joseph",
+      "Mary",
+      "Patricia",
+      "Jennifer",
+      "Linda",
+      "Elizabeth",
+      "Barbara",
+      "Susan",
+      "Jessica",
+    ],
+    LAST_NAMES: [
+      // Shona surnames
+      "Moyo",
+      "Ndlovu",
+      "Shumba",
+      "Gumbo",
+      "Mazhindu",
+      "Chakanyuka",
+      "Mupfudza",
+      "Chiwenga",
+      "Mutasa",
+      "Mugabe",
+      "Tsvangirai",
+      "Mujuru",
+      "Mugabe",
+      "Tsvangirai",
+      "Mujuru",
+      "Mugabe",
+      "Chiwenga",
+      "Mnangagwa",
+      "Chiwenga",
+      "Mnangagwa",
+      "Chiwenga",
+      "Mnangagwa",
+      "Chiwenga",
+      "Mnangagwa",
+      "Moyo",
+      "Ndlovu",
+      "Shumba",
+      "Gumbo",
+      "Mazhindu",
+      "Chakanyuka",
+      "Mupfudza",
+      "Chiwenga",
+      // Ndebele surnames
+      "Ndlovu",
+      "Ndlovu",
+      "Ndlovu",
+      "Ndlovu",
+      "Ndlovu",
+      "Ndlovu",
+      "Ndlovu",
+      "Ndlovu",
+      "Moyo",
+      "Moyo",
+      "Moyo",
+      "Moyo",
+      "Moyo",
+      "Moyo",
+      "Moyo",
+      "Moyo",
+      // English surnames common in Zimbabwe
+      "Smith",
+      "Jones",
+      "Brown",
+      "Taylor",
+      "Johnson",
+      "Williams",
+      "Davis",
+      "Miller",
+      "Wilson",
+      "Moore",
+      "Anderson",
+      "Thomas",
+      "Jackson",
+      "White",
+      "Harris",
+      "Martin",
+    ],
+  },
+  CITIES: {
+    Harare: ["Harare", "Chitungwiza", "Epworth", "Ruwa", "Norton"],
+    Bulawayo: ["Bulawayo", "Luveve", "Pumula", "Entumbane"],
+    Manicaland: ["Mutare", "Rusape", "Chipinge", "Nyanga", "Chimanimani"],
+    "Mashonaland Central": [
+      "Bindura",
+      "Mount Darwin",
+      "Guruve",
+      "Shamva",
+      "Mazowe",
+    ],
+    "Mashonaland East": ["Marondera", "Macheke", "Wedza", "Mudzi", "Uzumba"],
+    "Mashonaland West": ["Chinhoyi", "Kariba", "Norton", "Chegutu", "Kadoma"],
+    Masvingo: ["Masvingo", "Chivi", "Bikita", "Zaka", "Gutu"],
+    "Matabeleland North": [
+      "Hwange",
+      "Victoria Falls",
+      "Binga",
+      "Lupane",
+      "Nkayi",
+    ],
+    "Matabeleland South": [
+      "Gwanda",
+      "Beitbridge",
+      "Plumtree",
+      "Filabusi",
+      "Insiza",
+    ],
+    Midlands: ["Gweru", "Kwekwe", "Redcliff", "Shurugwi", "Zvishavane"],
+  },
+  INSTITUTIONS: [
     {
-      title: "Zimbabwe National Chess Championship 2025",
-      description: "Premier chess tournament featuring Zimbabwe's best players",
-      gameId: createdGames[0].id,
-      entryFee: 5.0,
-      prizePool: 500.0,
-      maxPlayers: 64,
-      status: TournamentStatus.OPEN,
-      province: "Harare",
+      name: "University of Zimbabwe",
+      type: "university",
       city: "Harare",
-      location: "Rainbow Towers, Harare",
-      venue: "Rainbow Towers Conference Centre",
-      isOnlineOnly: false,
-      targetAudience: "public",
-      category: TournamentCategory.PUBLIC,
-      difficultyLevel: "advanced",
-      registrationStart: new Date(
-        currentDate.getTime() - 2 * 24 * 60 * 60 * 1000
-      ),
-      registrationEnd: oneWeekFromNow,
-      startDate: new Date(oneWeekFromNow.getTime() + 24 * 60 * 60 * 1000),
-      endDate: new Date(oneWeekFromNow.getTime() + 3 * 24 * 60 * 60 * 1000),
-    },
-    {
-      title: "UZ Student Chess League",
-      description:
-        "Monthly chess tournament for University of Zimbabwe students",
-      gameId: createdGames[0].id,
-      entryFee: 1.0,
-      prizePool: 100.0,
-      maxPlayers: 32,
-      status: TournamentStatus.OPEN,
       province: "Harare",
-      city: "Harare",
-      location: "University of Zimbabwe",
-      venue: "UZ Main Hall",
-      isOnlineOnly: false,
-      targetAudience: "university",
-      category: TournamentCategory.UNIVERSITY,
-      difficultyLevel: "intermediate",
-      registrationStart: new Date(
-        currentDate.getTime() - 1 * 24 * 60 * 60 * 1000
-      ),
-      registrationEnd: new Date(
-        currentDate.getTime() + 5 * 24 * 60 * 60 * 1000
-      ),
-      startDate: new Date(currentDate.getTime() + 6 * 24 * 60 * 60 * 1000),
-      endDate: new Date(currentDate.getTime() + 7 * 24 * 60 * 60 * 1000),
     },
-    // Tournament starting soon (for testing)
     {
-      title: "Friday Night Checkers Blitz",
-      description: "Fast-paced checkers tournament every Friday",
-      gameId: createdGames[1].id,
-      entryFee: 0.5,
-      prizePool: 50.0,
-      maxPlayers: 16,
-      status: TournamentStatus.OPEN,
-      province: "Harare",
-      city: "Harare",
-      location: "Online",
-      isOnlineOnly: true,
-      targetAudience: "public",
-      category: TournamentCategory.PUBLIC,
-      difficultyLevel: "beginner",
-      registrationStart: new Date(
-        currentDate.getTime() - 3 * 24 * 60 * 60 * 1000
-      ),
-      registrationEnd: new Date(currentDate.getTime() + 2 * 60 * 60 * 1000), // 2 hours from now
-      startDate: new Date(currentDate.getTime() + 3 * 60 * 60 * 1000), // 3 hours from now
-      endDate: new Date(currentDate.getTime() + 6 * 60 * 60 * 1000), // 6 hours from now
-    },
-    // In-progress tournament
-    {
-      title: "Midlands Connect 4 Championship",
-      description: "Regional Connect 4 tournament for Midlands province",
-      gameId: createdGames[3].id,
-      entryFee: 2.0,
-      prizePool: 200.0,
-      maxPlayers: 24,
-      status: TournamentStatus.ACTIVE,
-      province: "Midlands",
-      city: "Gweru",
-      location: "Gweru Polytechnic",
-      venue: "Gweru Polytechnic Sports Hall",
-      isOnlineOnly: false,
-      targetAudience: "public",
-      category: TournamentCategory.PUBLIC,
-      difficultyLevel: "intermediate",
-      registrationStart: new Date(
-        currentDate.getTime() - 10 * 24 * 60 * 60 * 1000
-      ),
-      registrationEnd: new Date(
-        currentDate.getTime() - 3 * 24 * 60 * 60 * 1000
-      ),
-      startDate: new Date(currentDate.getTime() - 2 * 24 * 60 * 60 * 1000),
-      endDate: new Date(currentDate.getTime() + 1 * 24 * 60 * 60 * 1000),
-    },
-    // Completed tournament
-    {
-      title: "New Year Chess Classic 2025",
-      description: "Special New Year chess tournament with great prizes",
-      gameId: createdGames[0].id,
-      entryFee: 3.0,
-      prizePool: 300.0,
-      maxPlayers: 32,
-      status: TournamentStatus.COMPLETED,
-      province: "Bulawayo",
+      name: "National University of Science and Technology",
+      type: "university",
       city: "Bulawayo",
-      location: "Bulawayo Athletic Club",
-      venue: "Bulawayo Athletic Club",
-      isOnlineOnly: false,
-      targetAudience: "public",
-      category: TournamentCategory.PUBLIC,
-      difficultyLevel: "intermediate",
-      registrationStart: new Date("2024-12-15"),
-      registrationEnd: new Date("2024-12-28"),
-      startDate: new Date("2025-01-01"),
-      endDate: new Date("2025-01-03"),
+      province: "Bulawayo",
     },
-  ];
+    {
+      name: "Africa University",
+      type: "university",
+      city: "Mutare",
+      province: "Manicaland",
+    },
+    {
+      name: "Midlands State University",
+      type: "university",
+      city: "Gweru",
+      province: "Midlands",
+    },
+    {
+      name: "Bindura University of Science Education",
+      type: "university",
+      city: "Bindura",
+      province: "Mashonaland Central",
+    },
+    {
+      name: "Great Zimbabwe University",
+      type: "university",
+      city: "Masvingo",
+      province: "Masvingo",
+    },
+    {
+      name: "Lupane State University",
+      type: "university",
+      city: "Lupane",
+      province: "Matabeleland North",
+    },
+    {
+      name: "Econet Wireless Zimbabwe",
+      type: "company",
+      city: "Harare",
+      province: "Harare",
+    },
+    { name: "CBZ Bank", type: "company", city: "Harare", province: "Harare" },
+    {
+      name: "Delta Corporation",
+      type: "company",
+      city: "Harare",
+      province: "Harare",
+    },
+  ],
+  MOBILE_MONEY_PROVIDERS: [
+    { name: "EcoCash", code: "ECOCASH", minAmount: 1.0, maxAmount: 10000.0 },
+    { name: "OneMoney", code: "ONEMONEY", minAmount: 1.0, maxAmount: 5000.0 },
+    { name: "Telecash", code: "TELECASH", minAmount: 1.0, maxAmount: 3000.0 },
+  ],
+};
 
-  // Add more tournaments with various games and statuses
-  for (let i = 0; i < 15; i++) {
-    const game = createdGames[Math.floor(Math.random() * createdGames.length)];
-    const province = provinces[Math.floor(Math.random() * provinces.length)];
-    const isOnline = Math.random() < 0.4; // 40% online
-    const status =
-      Math.random() < 0.6
-        ? TournamentStatus.OPEN
-        : Math.random() < 0.3
-        ? TournamentStatus.ACTIVE
-        : TournamentStatus.COMPLETED;
+// Utility functions
+function generateZimbabwePhone(): string {
+  const prefixes = ["263771", "263772", "263773", "263774", "263778"];
+  const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+  const suffix = Math.floor(Math.random() * 900000) + 100000;
+  return `+${prefix}${suffix}`;
+}
 
-    // Adjust dates based on status
-    let regStart, regEnd, startDate, endDate;
-    if (status === TournamentStatus.OPEN) {
-      regStart = randomDate(
-        new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000),
-        currentDate
-      );
-      regEnd = randomDate(currentDate, oneWeekFromNow);
-      startDate = new Date(regEnd.getTime() + 24 * 60 * 60 * 1000);
-      endDate = new Date(startDate.getTime() + 2 * 24 * 60 * 60 * 1000);
-    } else if (status === TournamentStatus.ACTIVE) {
-      regStart = new Date(currentDate.getTime() - 10 * 24 * 60 * 60 * 1000);
-      regEnd = new Date(currentDate.getTime() - 3 * 24 * 60 * 60 * 1000);
-      startDate = new Date(currentDate.getTime() - 1 * 24 * 60 * 60 * 1000);
-      endDate = randomDate(currentDate, oneWeekFromNow);
-    } else {
-      regStart = new Date(currentDate.getTime() - 20 * 24 * 60 * 60 * 1000);
-      regEnd = new Date(currentDate.getTime() - 10 * 24 * 60 * 60 * 1000);
-      startDate = new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000);
-      endDate = new Date(currentDate.getTime() - 3 * 24 * 60 * 60 * 1000);
-    }
+function randomChoice<T>(array: T[]): T {
+  return array[Math.floor(Math.random() * array.length)];
+}
 
-    tournamentTemplates.push({
-      title: `${game.name} ${province} Tournament #${i + 1}`,
-      description: `${game.name} tournament for ${province} province players`,
-      gameId: game.id,
-      entryFee: roundToCents(Math.random() * 3 + 0.5),
-      prizePool: roundToCents(Math.random() * 200 + 50),
-      maxPlayers: [8, 16, 24, 32][Math.floor(Math.random() * 4)],
-      status,
-      province,
-      city:
-        province === "Harare"
-          ? "Harare"
-          : province === "Bulawayo"
-          ? "Bulawayo"
-          : "Main City",
-      location: isOnline ? "Online" : `${province} Gaming Center`,
-      venue: isOnline ? undefined : `${province} Gaming Center`,
-      isOnlineOnly: isOnline,
-      targetAudience: Math.random() < 0.3 ? "university" : "public",
-      category:
-        Math.random() < 0.3
-          ? TournamentCategory.UNIVERSITY
-          : TournamentCategory.PUBLIC,
-      difficultyLevel: ["beginner", "intermediate", "advanced"][
-        Math.floor(Math.random() * 3)
-      ],
-      registrationStart: regStart,
-      registrationEnd: regEnd,
-      startDate,
-      endDate,
-    });
-  }
+function randomInt(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
 
-  const createdTournaments = await Promise.all(
-    tournamentTemplates.map((tournament) =>
-      prisma.tournament.create({
-        data: {
-          ...tournament,
-          prizeBreakdown: {
-            first: roundToCents(tournament.prizePool * 0.6),
-            second: roundToCents(tournament.prizePool * 0.25),
-            third: roundToCents(tournament.prizePool * 0.15),
-          },
-        },
-      })
-    )
+function randomFloat(min: number, max: number): number {
+  return parseFloat((Math.random() * (max - min) + min).toFixed(2));
+}
+
+function randomDate(start: Date, end: Date): Date {
+  return new Date(
+    start.getTime() + Math.random() * (end.getTime() - start.getTime())
   );
+}
 
-  // 7. Create tournament players (registrations)
-  console.log("👥 Creating tournament players...");
-  const tournamentPlayers: any[] = [];
+async function main() {
+  console.log("🚀 Starting Chess-Focused Zimbabwean Nhandare Seeding...");
+  console.log("📊 Configuration:", SEED_CONFIG);
 
-  for (const tournament of createdTournaments) {
-    const maxRegistrations = Math.min(
-      tournament.maxPlayers,
-      tournament.status === TournamentStatus.COMPLETED
-        ? tournament.maxPlayers
-        : Math.floor(tournament.maxPlayers * (0.4 + Math.random() * 0.6))
+  try {
+    // Clear existing data
+    await clearExistingData();
+    console.log("✅ Database cleared");
+
+    // Create core data
+    const games = await createGames();
+    console.log("✅ Chess game created:", games.length);
+
+    const institutions = await createInstitutions();
+    console.log("✅ Institutions created:", institutions.length);
+
+    const mobileMoneyProviders = await createMobileMoneyProviders();
+    console.log(
+      "✅ Mobile money providers created:",
+      mobileMoneyProviders.length
     );
 
-    // Randomly select users for this tournament
-    const selectedUsers = createdUsers
-      .slice(1) // Skip admin
-      .sort(() => Math.random() - 0.5)
-      .slice(0, maxRegistrations);
+    const users = await createUsers(institutions);
+    console.log("✅ Users created:", users.length);
 
-    selectedUsers.forEach((user, index) => {
-      tournamentPlayers.push({
-        userId: user.id,
-        tournamentId: tournament.id,
-        registeredAt: randomDate(
-          tournament.registrationStart,
-          tournament.registrationEnd
-        ),
-        joinedAt: randomDate(
-          tournament.registrationStart,
-          tournament.registrationEnd
-        ),
-        isActive:
-          tournament.status !== TournamentStatus.COMPLETED
-            ? true
-            : index < maxRegistrations,
-        seedNumber: index + 1,
-        currentRound:
-          tournament.status === TournamentStatus.COMPLETED
-            ? Math.floor(Math.log2(maxRegistrations)) + 1
-            : 1,
-        isEliminated:
-          tournament.status === TournamentStatus.COMPLETED ? index >= 3 : false,
-        placement:
-          tournament.status === TournamentStatus.COMPLETED
-            ? index === 0
-              ? 1
-              : index === 1
-              ? 2
-              : index === 2
-              ? 3
-              : null
-            : null,
-        prizeWon:
-          tournament.status === TournamentStatus.COMPLETED
-            ? index === 0
-              ? roundToCents(tournament.prizePool * 0.6)
-              : index === 1
-              ? roundToCents(tournament.prizePool * 0.25)
-              : index === 2
-              ? roundToCents(tournament.prizePool * 0.15)
-              : 0
-            : 0,
-      });
+    const tournaments = await createTournaments(games, users);
+    console.log("✅ Tournaments created:", tournaments.length);
+
+    const tournamentPlayers = await createTournamentPlayers(tournaments, users);
+    console.log("✅ Tournament players created:", tournamentPlayers.length);
+
+    // Generate brackets for all tournaments using BracketGenerationService
+    // Generate brackets for all tournaments using BracketGenerationService
+    console.log("🏆 Generating tournament brackets...");
+    for (const tournament of tournaments) {
+      try {
+        // Get the actual player count for this tournament
+        const playerCount = await prisma.tournamentPlayer.count({
+          where: { tournamentId: tournament.id },
+        });
+
+        if (playerCount >= 2) {
+          await BracketGenerationService.generateBracket(tournament.id, true); // Use advanced seeding
+          console.log(
+            `   ✅ Bracket generated for tournament: ${tournament.title} (${playerCount} players)`
+          );
+        } else {
+          console.log(
+            `   ⚠️  Skipping bracket generation for tournament: ${tournament.title} (${playerCount} players - insufficient)`
+          );
+        }
+      } catch (error) {
+        console.error(
+          `   ❌ Failed to generate bracket for tournament: ${tournament.title}`,
+          error
+        );
+      }
+    }
+    console.log("✅ Tournament brackets generated");
+
+    const matches = await createMatches(tournaments, users);
+    console.log("✅ Matches created:", matches.length);
+
+    const gameSessions = await createGameSessions(matches, users, games);
+    console.log("✅ Game sessions created:", gameSessions.length);
+
+    const gameStatistics = await createGameStatistics(users, games);
+    console.log("✅ Game statistics created:", gameStatistics.length);
+
+    const achievements = await createAchievements();
+    console.log("✅ Achievements created:", achievements.length);
+
+    const userAchievements = await createUserAchievements(users, achievements);
+    console.log("✅ User achievements created:", userAchievements.length);
+
+    const payments = await createPayments(users, tournaments);
+    console.log("✅ Payments created:", payments.length);
+
+    const matchmakingQueue = await createMatchmakingQueue(users, games);
+    console.log("✅ Matchmaking queue created:", matchmakingQueue.length);
+
+    const matchmakingMetrics = await createMatchmakingMetrics(games);
+    console.log("✅ Matchmaking metrics created:", matchmakingMetrics.length);
+
+    const tournamentEvents = await createTournamentEvents(tournaments, users);
+    console.log("✅ Tournament events created:", tournamentEvents.length);
+
+    const tournamentHighlights = await createTournamentHighlights(
+      tournaments,
+      users
+    );
+    console.log(
+      "✅ Tournament highlights created:",
+      tournamentHighlights.length
+    );
+
+    const tournamentSpectators = await createTournamentSpectators(
+      tournaments,
+      users
+    );
+    console.log(
+      "✅ Tournament spectators created:",
+      tournamentSpectators.length
+    );
+
+    const userActivities = await createUserActivities(users);
+    console.log("✅ User activities created:", userActivities.length);
+
+    const flaggedContent = await createFlaggedContent(users);
+    console.log("✅ Flagged content created:", flaggedContent.length);
+
+    const userModerations = await createUserModerations(users);
+    console.log("✅ User moderations created:", userModerations.length);
+
+    const auditLogs = await createAuditLogs(users);
+    console.log("✅ Audit logs created:", auditLogs.length);
+
+    const challengeInvitations = await createChallengeInvitations(users, games);
+    console.log(
+      "✅ Challenge invitations created:",
+      challengeInvitations.length
+    );
+
+    console.log(
+      "\n🎉 Chess-Focused Zimbabwean Seeding Completed Successfully!"
+    );
+    console.log("📈 Total Records Created:");
+    console.log(`   👥 Users: ${users.length}`);
+    console.log(`   ♟️ Chess Tournaments: ${tournaments.length}`);
+    console.log(`   🎮 Chess Matches: ${matches.length}`);
+    console.log(`   💰 Payments: ${payments.length}`);
+    console.log(`   📊 Chess Statistics: ${gameStatistics.length}`);
+
+    // Show bracket type distribution
+    const bracketTypeCounts = tournaments.reduce((acc, t) => {
+      acc[t.bracketType] = (acc[t.bracketType] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    console.log("\n🎯 Bracket System Testing Coverage:");
+    console.log("   ✅ All 4 bracket types created for comprehensive testing:");
+    Object.entries(bracketTypeCounts).forEach(([type, count]) => {
+      console.log(`      ${type}: ${count} tournaments`);
     });
+
+    console.log("\n🚀 Ready for bracket system testing!");
+    console.log("   • Single Elimination: Basic bracket progression");
+    console.log("   • Double Elimination: Winners/losers brackets");
+    console.log("   • Round Robin: Berger tables with optimal pairing");
+    console.log("   • Swiss System: Score-based pairing algorithms");
+  } catch (error) {
+    console.error("❌ Seeding failed:", error);
+    throw error;
+  }
+}
+
+async function clearExistingData() {
+  const tables = [
+    "audit_logs",
+    "user_moderations",
+    "flagged_content",
+    "user_activities",
+    "tournament_spectators",
+    "tournament_highlights",
+    "tournament_events",
+    "matchmaking_metrics",
+    "matchmaking_queue",
+    "user_achievements",
+    "achievements",
+    "game_statistics",
+    "game_sessions",
+    "challenge_invitations",
+    "matches",
+    "tournament_players",
+    "payments",
+    "tournaments",
+    "users",
+    "institutions",
+    "mobile_money_providers",
+    "games",
+  ];
+
+  for (const table of tables) {
+    await prisma.$executeRawUnsafe(`TRUNCATE TABLE "${table}" CASCADE;`);
+  }
+}
+
+async function createGames() {
+  const gamesData = [
+    {
+      name: "Chess",
+      description:
+        "Strategic board game for two players with deep tactical gameplay. The ultimate test of strategy, tactics, and mental endurance.",
+      emoji: "♟️",
+      minPlayers: 2,
+      maxPlayers: 2,
+      averageTimeMs: 1800000, // 30 minutes
+      rules: {
+        timeControl: "10+5",
+        format: "Standard",
+        specialRules: ["Castling", "En passant", "Pawn promotion"],
+        drawConditions: [
+          "Stalemate",
+          "Threefold repetition",
+          "Fifty-move rule",
+        ],
+      },
+      settings: {
+        allowDraw: true,
+        autoPromote: false,
+        moveValidation: true,
+        notation: "Algebraic",
+      },
+    },
+  ];
+
+  const games: any[] = [];
+  for (const gameData of gamesData) {
+    const game = await prisma.game.create({ data: gameData });
+    games.push(game);
+  }
+  return games;
+}
+
+async function createInstitutions() {
+  const institutions: any[] = [];
+  for (const instData of ZIMBABWE_DATA.INSTITUTIONS) {
+    const institution = await prisma.institution.create({
+      data: {
+        ...instData,
+        isActive: true,
+        totalUsers: 0,
+        totalTournaments: 0,
+      },
+    });
+    institutions.push(institution);
+  }
+  return institutions;
+}
+
+async function createMobileMoneyProviders() {
+  const providers: any[] = [];
+  for (const providerData of ZIMBABWE_DATA.MOBILE_MONEY_PROVIDERS) {
+    const provider = await prisma.mobileMoneyProvider.create({
+      data: {
+        ...providerData,
+        isActive: true,
+        feeStructure: {
+          transactionFee: 0.02, // 2% fee
+          minimumFee: 0.1,
+          maximumFee: 5.0,
+        },
+      },
+    });
+    providers.push(provider);
+  }
+  return providers;
+}
+
+async function createUsers(institutions: any[]) {
+  const users: any[] = [];
+  const totalUsers = SEED_CONFIG.USERS.TOTAL;
+  const adminCount = Math.floor(
+    totalUsers * SEED_CONFIG.USERS.ADMIN_PERCENTAGE
+  );
+  const moderatorCount = Math.floor(
+    totalUsers * SEED_CONFIG.USERS.MODERATOR_PERCENTAGE
+  );
+  const regularUserCount = totalUsers - adminCount - moderatorCount;
+
+  // Create admin users
+  for (let i = 0; i < adminCount; i++) {
+    const firstName = randomChoice(ZIMBABWE_DATA.NAMES.FIRST_NAMES);
+    const lastName = randomChoice(ZIMBABWE_DATA.NAMES.LAST_NAMES);
+    const user = await prisma.user.create({
+      data: {
+        email: `admin${i + 1}@nhandare.co.zw`,
+        username: `${firstName}${lastName}${i + 1}`,
+        password: await hash("admin123", 12),
+        firstName: firstName,
+        lastName: lastName,
+        role: "super_admin",
+        permissions: ["*"],
+        isActive: true,
+        isVerified: true,
+        province: randomChoice(ZIMBABWE_DATA.PROVINCES),
+        city: randomChoice(ZIMBABWE_DATA.CITIES.Harare),
+        location: "Harare, Zimbabwe",
+        phoneNumber: generateZimbabwePhone(),
+        ecocashNumber: generateZimbabwePhone(),
+        mobileMoneyProvider: "ECOCASH",
+        preferredLanguage: "en",
+        isStudent: false,
+        institution: "Nhandare Gaming",
+        points: 0,
+        rank: i + 1,
+        gamesPlayed: 0,
+        gamesWon: 0,
+        winRate: 0,
+        dateOfBirth: randomDate(new Date(1980, 0, 1), new Date(1995, 0, 1)),
+        gender: randomChoice(["male", "female"]),
+        isVerifiedID: true,
+      },
+    });
+    users.push(user);
   }
 
-  await prisma.tournamentPlayer.createMany({ data: tournamentPlayers });
+  // Create moderator users
+  for (let i = 0; i < moderatorCount; i++) {
+    const firstName = randomChoice(ZIMBABWE_DATA.NAMES.FIRST_NAMES);
+    const lastName = randomChoice(ZIMBABWE_DATA.NAMES.LAST_NAMES);
+    const user = await prisma.user.create({
+      data: {
+        email: `moderator${i + 1}@nhandare.co.zw`,
+        username: `${firstName}${lastName}${i + 1}`,
+        password: await hash("mod123", 12),
+        firstName: firstName,
+        lastName: lastName,
+        role: "moderator",
+        permissions: [
+          "content:moderate",
+          "user:moderate",
+          "tournament:moderate",
+        ],
+        isActive: true,
+        isVerified: true,
+        province: randomChoice(ZIMBABWE_DATA.PROVINCES),
+        city: randomChoice(ZIMBABWE_DATA.CITIES.Bulawayo),
+        location: "Bulawayo, Zimbabwe",
+        phoneNumber: generateZimbabwePhone(),
+        ecocashNumber: generateZimbabwePhone(),
+        mobileMoneyProvider: randomChoice(["ECOCASH", "ONEMONEY"]),
+        preferredLanguage: randomChoice(["en", "sn", "nd"]),
+        isStudent: false,
+        institution: "Nhandare Gaming",
+        points: randomInt(100, 500),
+        rank: adminCount + i + 1,
+        gamesPlayed: randomInt(10, 50),
+        gamesWon: randomInt(5, 30),
+        winRate: randomFloat(60, 85),
+        dateOfBirth: randomDate(new Date(1985, 0, 1), new Date(2000, 0, 1)),
+        gender: randomChoice(["male", "female"]),
+        isVerifiedID: true,
+      },
+    });
+    users.push(user);
+  }
 
-  // 8. Create payments for tournament entries
-  console.log("💳 Creating tournament payments...");
-  const payments: any[] = [];
+  // Create regular users
+  for (let i = 0; i < regularUserCount; i++) {
+    const isStudent = Math.random() < SEED_CONFIG.USERS.STUDENT_PERCENTAGE;
+    const isVerified = Math.random() < SEED_CONFIG.USERS.VERIFIED_PERCENTAGE;
+    const province = randomChoice(ZIMBABWE_DATA.PROVINCES);
+    const city = randomChoice(
+      ZIMBABWE_DATA.CITIES[province as keyof typeof ZIMBABWE_DATA.CITIES] ||
+        ZIMBABWE_DATA.CITIES.Harare
+    );
+    const institution = isStudent
+      ? randomChoice(institutions.filter((inst) => inst.type === "university"))
+      : randomChoice(institutions.filter((inst) => inst.type === "company"));
 
-  for (const tp of tournamentPlayers) {
-    const tournament = createdTournaments.find((t) => t.id === tp.tournamentId);
-    if (tournament && tournament.entryFee > 0) {
-      payments.push({
-        userId: tp.userId,
-        tournamentId: tp.tournamentId,
-        amount: tournament.entryFee,
-        currency: "USD",
-        type: PaymentType.ENTRY_FEE,
-        status: PaymentStatus.COMPLETED,
-        paymentMethodCode: Math.random() < 0.7 ? "ECOCASH" : "ONEMONEY",
-        mobileMoneyNumber: generateZimbabwePhone(),
-        paymentConfirmedAt: tp.registeredAt,
-        createdAt: tp.registeredAt,
+    const gamesPlayed = randomInt(20, 200);
+    const gamesWon = Math.floor(gamesPlayed * (randomFloat(50, 90) / 100));
+    const winRate = (gamesWon / gamesPlayed) * 100;
+    const points = Math.floor(winRate * 10) + randomInt(100, 500);
+
+    const firstName = randomChoice(ZIMBABWE_DATA.NAMES.FIRST_NAMES);
+    const lastName = randomChoice(ZIMBABWE_DATA.NAMES.LAST_NAMES);
+    const user = await prisma.user.create({
+      data: {
+        email: `player${i + 1}@nhandare.co.zw`,
+        username: `${firstName}${lastName}${i + 1}`,
+        password: await hash("password123", 12),
+        firstName: firstName,
+        lastName: lastName,
+        role: "user",
+        permissions: [],
+        isActive: true,
+        isVerified,
+        province,
+        city,
+        location: `${city}, ${province}`,
+        phoneNumber: generateZimbabwePhone(),
+        ecocashNumber: generateZimbabwePhone(),
+        mobileMoneyProvider: randomChoice(["ECOCASH", "ONEMONEY", "TELECASH"]),
+        preferredLanguage: randomChoice(["en", "sn", "nd"]),
+        isStudent,
+        institution: institution?.name || "Independent",
+        points,
+        rank: adminCount + moderatorCount + i + 1,
+        gamesPlayed,
+        gamesWon,
+        winRate: parseFloat(winRate.toFixed(1)),
+        dateOfBirth: randomDate(new Date(1990, 0, 1), new Date(2005, 0, 1)),
+        gender: randomChoice(["male", "female"]),
+        isVerifiedID: isVerified && Math.random() < 0.7,
+        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=player${
+          i + 1
+        }`,
+        bio: isStudent
+          ? `Student at ${institution?.name}`
+          : `Gaming enthusiast from ${province}`,
+      },
+    });
+    users.push(user);
+  }
+
+  // Note: Game statistics are created in createGameStatistics function
+  // to avoid duplicate creation and ensure proper data consistency
+
+  return users;
+}
+
+async function createTournaments(games: any[], users: any[]) {
+  const tournaments: any[] = [];
+  const totalTournaments = SEED_CONFIG.TOURNAMENTS.TOTAL;
+  const activeCount = Math.floor(
+    totalTournaments * SEED_CONFIG.TOURNAMENTS.ACTIVE_PERCENTAGE
+  );
+  const completedCount = Math.floor(
+    totalTournaments * SEED_CONFIG.TOURNAMENTS.COMPLETED_PERCENTAGE
+  );
+  const openCount = totalTournaments - activeCount - completedCount;
+
+  // Ensure we create at least one tournament of each bracket type for testing
+  const bracketTypes = [
+    "SINGLE_ELIMINATION",
+    "DOUBLE_ELIMINATION",
+    "ROUND_ROBIN",
+    "SWISS",
+  ];
+
+  console.log("🎯 Creating comprehensive bracket type coverage...");
+
+  // Create one tournament of each bracket type for testing
+  for (let i = 0; i < bracketTypes.length; i++) {
+    const bracketType = bracketTypes[i];
+    const playerCount = randomChoice(SEED_CONFIG.BRACKET_TESTING.PLAYER_COUNTS);
+    const useAdvancedSeeding =
+      Math.random() < SEED_CONFIG.TOURNAMENTS.ADVANCED_SEEDING_PERCENTAGE;
+
+    const seedingConfig = useAdvancedSeeding
+      ? {
+          includePerformance: Math.random() < 0.8,
+          includeHistory: Math.random() < 0.7,
+          includeRegional: Math.random() < 0.6,
+          includeConsistency: Math.random() < 0.5,
+          performanceWeight:
+            SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.PERFORMANCE,
+          historyWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.HISTORY,
+          regionalWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.REGIONAL,
+          consistencyWeight:
+            SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.CONSISTENCY,
+          ratingWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.RATING,
+          recentTournaments: randomInt(
+            SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[0],
+            SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[1]
+          ),
+          regionalRadius: randomInt(
+            SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[0],
+            SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[1]
+          ),
+        }
+      : null;
+
+    const tournament = await prisma.tournament.create({
+      data: {
+        title: `Test ${bracketType} Tournament - ${new Date().getFullYear()}`,
+        description: `Comprehensive testing tournament for ${bracketType} bracket system with ${
+          useAdvancedSeeding ? "advanced" : "basic"
+        } seeding.`,
+        prizePool: randomFloat(500, 2000),
+        entryFee: randomFloat(20, 100),
+        maxPlayers: playerCount,
+        currentPlayers: Math.min(randomInt(8, playerCount), playerCount),
+        status: "OPEN",
+        province: randomChoice(ZIMBABWE_DATA.PROVINCES),
+        city: randomChoice(ZIMBABWE_DATA.CITIES.Harare),
+        location: "Harare, Zimbabwe",
+        venue: randomChoice(SEED_CONFIG.CHESS.VENUES),
+        isOnlineOnly: Math.random() < 0.7,
+        targetAudience: randomChoice(["university", "corporate", "public"]),
+        sponsorName: randomChoice([
+          "Econet",
+          "CBZ Bank",
+          "Delta Corporation",
+          "NetOne",
+          null,
+        ]),
+        minimumAge: randomChoice([13, 16, 18, null]),
+        maxAge: randomChoice([25, 35, 50, null]),
+        category: randomChoice([
+          "UNIVERSITY",
+          "CORPORATE",
+          "PUBLIC",
+          "INVITATION_ONLY",
+        ]),
+        difficultyLevel: randomChoice(["beginner", "intermediate", "advanced"]),
+        prizeBreakdown: {
+          "1st": randomFloat(200, 1000),
+          "2nd": randomFloat(100, 500),
+          "3rd": randomFloat(50, 250),
+          "4th": randomFloat(25, 100),
+        },
+        localCurrency: "USD",
+        platformFeeRate: 0.2,
+        registrationStart: new Date(),
+        registrationEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        startDate: new Date(Date.now() + 31 * 24 * 60 * 60 * 1000),
+        endDate: new Date(Date.now() + 38 * 24 * 60 * 60 * 1000),
+        gameId: games[0].id,
+        bracketType: bracketType as any, // Cast to any to avoid type issues in seeding
+        bracketConfig: {
+          useAdvancedSeeding,
+          seedingOptions: {
+            includePerformance: useAdvancedSeeding,
+            includeHistory: useAdvancedSeeding,
+            includeRegional: useAdvancedSeeding && Math.random() < 0.4,
+            includeConsistency: useAdvancedSeeding && Math.random() < 0.6,
+            performanceWeight: useAdvancedSeeding
+              ? SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.PERFORMANCE
+              : 0,
+            historyWeight: useAdvancedSeeding
+              ? SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.HISTORY
+              : 0,
+            regionalWeight: useAdvancedSeeding
+              ? SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.REGIONAL
+              : 0,
+            consistencyWeight: useAdvancedSeeding
+              ? SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.CONSISTENCY
+              : 0,
+            ratingWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.RATING,
+            recentTournaments: useAdvancedSeeding
+              ? randomInt(
+                  SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[0],
+                  SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[1]
+                )
+              : 0,
+            regionalRadius: useAdvancedSeeding
+              ? randomInt(
+                  SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[0],
+                  SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[1]
+                )
+              : 0,
+          },
+        },
+        bracket: {}, // Will be generated by BracketGenerationService
+      },
+    });
+
+    console.log(`✅ Created ${bracketType} tournament: ${tournament.title}`);
+    tournaments.push(tournament);
+  }
+
+  const now = new Date();
+  const oneYearAgo = new Date(now.getFullYear() - 1, 0, 1);
+  const oneYearFromNow = new Date(now.getFullYear() + 1, 11, 31);
+
+  // Create completed tournaments
+  for (let i = 0; i < completedCount; i++) {
+    const game = randomChoice(games);
+    const startDate = randomDate(
+      oneYearAgo,
+      new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+    );
+    const endDate = randomDate(
+      startDate,
+      new Date(startDate.getTime() + 7 * 24 * 60 * 60 * 1000)
+    );
+    const registrationStart = randomDate(
+      new Date(startDate.getTime() - 30 * 24 * 60 * 60 * 1000),
+      startDate
+    );
+    const registrationEnd = randomDate(registrationStart, startDate);
+
+    const tournament = await prisma.tournament.create({
+      data: {
+        title: `Chess Championship ${startDate.getFullYear()} - ${randomChoice([
+          "Spring",
+          "Summer",
+          "Autumn",
+          "Winter",
+        ])}`,
+        description: `Annual Chess championship tournament with exciting prizes and competitive gameplay. Test your strategic thinking against Zimbabwe's finest players.`,
+        prizePool: randomFloat(100, 5000),
+        entryFee: randomFloat(5, 50),
+        maxPlayers: randomChoice([16, 32, 64, 128]),
+        currentPlayers: randomInt(8, 64),
+        status: "COMPLETED",
+        province: randomChoice(ZIMBABWE_DATA.PROVINCES),
+        city: randomChoice(ZIMBABWE_DATA.CITIES.Harare),
+        location: "Harare, Zimbabwe",
+        venue: randomChoice(SEED_CONFIG.CHESS.VENUES),
+        isOnlineOnly: Math.random() < 0.6,
+        targetAudience: randomChoice(["university", "corporate", "public"]),
+        sponsorName: randomChoice([
+          "Econet",
+          "CBZ Bank",
+          "Delta Corporation",
+          "NetOne",
+          null,
+        ]),
+        minimumAge: randomChoice([13, 16, 18, null]),
+        maxAge: randomChoice([25, 35, 50, null]),
+        category: randomChoice([
+          "UNIVERSITY",
+          "CORPORATE",
+          "PUBLIC",
+          "INVITATION_ONLY",
+        ]),
+        difficultyLevel: randomChoice(["beginner", "intermediate", "advanced"]),
+        prizeBreakdown: {
+          "1st": randomFloat(200, 2000),
+          "2nd": randomFloat(100, 1000),
+          "3rd": randomFloat(50, 500),
+          "4th": randomFloat(25, 250),
+          "5th": randomFloat(10, 100),
+        },
+        localCurrency: "USD",
+        platformFeeRate: 0.2,
+        registrationStart,
+        registrationEnd,
+        startDate,
+        endDate,
+        gameId: game.id,
+        bracketType: randomChoice([
+          "SINGLE_ELIMINATION",
+          "DOUBLE_ELIMINATION",
+          "ROUND_ROBIN",
+          "SWISS",
+        ]),
+        bracket: {}, // Will be generated by BracketGenerationService
+      },
+    });
+    tournaments.push(tournament);
+  }
+
+  // Create active tournaments
+  for (let i = 0; i < activeCount; i++) {
+    const game = randomChoice(games);
+    const startDate = randomDate(
+      new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+      now
+    );
+    const endDate = randomDate(
+      now,
+      new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000)
+    );
+    const registrationStart = randomDate(
+      new Date(startDate.getTime() - 30 * 24 * 60 * 60 * 1000),
+      startDate
+    );
+    const registrationEnd = randomDate(registrationStart, startDate);
+
+    const tournament = await prisma.tournament.create({
+      data: {
+        title: `Chess Live Tournament ${new Date().getFullYear()} - ${randomChoice(
+          ["Weekend", "Midweek", "Holiday"]
+        )}`,
+        description: `Live Chess tournament happening now! Join the competition and win exciting prizes. Show your tactical brilliance!`,
+        prizePool: randomFloat(200, 3000),
+        entryFee: randomFloat(10, 100),
+        maxPlayers: randomChoice([16, 32, 64]),
+        currentPlayers: randomInt(8, 32),
+        status: "ACTIVE",
+        province: randomChoice(ZIMBABWE_DATA.PROVINCES),
+        city: randomChoice(ZIMBABWE_DATA.CITIES.Bulawayo),
+        location: "Bulawayo, Zimbabwe",
+        venue: randomChoice(SEED_CONFIG.CHESS.VENUES),
+        isOnlineOnly: Math.random() < 0.7,
+        targetAudience: randomChoice(["university", "corporate", "public"]),
+        sponsorName: randomChoice(["NetOne", "Econet", "CBZ Bank", null]),
+        minimumAge: randomChoice([13, 16, 18, null]),
+        maxAge: randomChoice([25, 35, 50, null]),
+        category: randomChoice([
+          "UNIVERSITY",
+          "CORPORATE",
+          "PUBLIC",
+          "INVITATION_ONLY",
+        ]),
+        difficultyLevel: randomChoice(["beginner", "intermediate", "advanced"]),
+        prizeBreakdown: {
+          "1st": randomFloat(100, 1500),
+          "2nd": randomFloat(50, 750),
+          "3rd": randomFloat(25, 375),
+          "4th": randomFloat(10, 150),
+        },
+        localCurrency: "USD",
+        platformFeeRate: 0.2,
+        registrationStart,
+        registrationEnd,
+        startDate,
+        endDate,
+        gameId: game.id,
+        bracketType: randomChoice([
+          "SINGLE_ELIMINATION",
+          "DOUBLE_ELIMINATION",
+          "ROUND_ROBIN",
+          "SWISS",
+        ]) as any,
+        bracketConfig: {
+          useAdvancedSeeding:
+            Math.random() < SEED_CONFIG.TOURNAMENTS.ADVANCED_SEEDING_PERCENTAGE,
+          seedingOptions: {
+            includePerformance: true,
+            includeHistory: true,
+            includeRegional: Math.random() < 0.4,
+            includeConsistency: Math.random() < 0.6,
+            performanceWeight:
+              SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.PERFORMANCE,
+            historyWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.HISTORY,
+            regionalWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.REGIONAL,
+            consistencyWeight:
+              SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.CONSISTENCY,
+            ratingWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.RATING,
+            recentTournaments: randomInt(
+              SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[0],
+              SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[1]
+            ),
+            regionalRadius: randomInt(
+              SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[0],
+              SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[1]
+            ),
+          },
+        },
+        bracket: {}, // Will be generated by BracketGenerationService
+      },
+    });
+    tournaments.push(tournament);
+  }
+
+  // Create open tournaments
+  for (let i = 0; i < openCount; i++) {
+    const game = randomChoice(games);
+    const registrationStart = randomDate(
+      now,
+      new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+    );
+    const registrationEnd = randomDate(
+      registrationStart,
+      new Date(registrationStart.getTime() + 30 * 24 * 60 * 60 * 1000)
+    );
+    const startDate = randomDate(
+      registrationEnd,
+      new Date(registrationEnd.getTime() + 7 * 24 * 60 * 60 * 1000)
+    );
+    const endDate = randomDate(
+      startDate,
+      new Date(startDate.getTime() + 7 * 24 * 60 * 60 * 1000)
+    );
+
+    const tournament = await prisma.tournament.create({
+      data: {
+        title: `Chess Open Championship ${new Date().getFullYear()} - ${randomChoice(
+          ["Spring", "Summer", "Autumn", "Winter"]
+        )}`,
+        description: `Open Chess championship for all skill levels. Registration now open! Perfect for beginners and masters alike.`,
+        prizePool: randomFloat(500, 10000),
+        entryFee: randomFloat(20, 200),
+        maxPlayers: randomChoice([32, 64, 128, 256]),
+        currentPlayers: randomInt(0, 32),
+        status: "OPEN",
+        province: randomChoice(ZIMBABWE_DATA.PROVINCES),
+        city: randomChoice(ZIMBABWE_DATA.CITIES.Manicaland),
+        location: "Mutare, Zimbabwe",
+        venue: randomChoice(SEED_CONFIG.CHESS.VENUES),
+        isOnlineOnly: Math.random() < 0.5,
+        targetAudience: randomChoice(["university", "corporate", "public"]),
+        sponsorName: randomChoice([
+          "Econet",
+          "CBZ Bank",
+          "Delta Corporation",
+          "NetOne",
+          null,
+        ]),
+        minimumAge: randomChoice([13, 16, 18, null]),
+        maxAge: randomChoice([25, 35, 50, null]),
+        category: randomChoice([
+          "UNIVERSITY",
+          "CORPORATE",
+          "PUBLIC",
+          "INVITATION_ONLY",
+        ]),
+        difficultyLevel: randomChoice(["beginner", "intermediate", "advanced"]),
+        prizeBreakdown: {
+          "1st": randomFloat(300, 3000),
+          "2nd": randomFloat(150, 1500),
+          "3rd": randomFloat(75, 750),
+          "4th": randomFloat(40, 400),
+          "5th": randomFloat(20, 200),
+          "6th": randomFloat(10, 100),
+        },
+        localCurrency: "USD",
+        platformFeeRate: 0.2,
+        registrationStart,
+        registrationEnd,
+        startDate,
+        endDate,
+        gameId: game.id,
+        bracketType: randomChoice([
+          "SINGLE_ELIMINATION",
+          "DOUBLE_ELIMINATION",
+          "ROUND_ROBIN",
+          "SWISS",
+        ]) as any,
+        bracketConfig: {
+          useAdvancedSeeding:
+            Math.random() < SEED_CONFIG.TOURNAMENTS.ADVANCED_SEEDING_PERCENTAGE,
+          seedingOptions: {
+            includePerformance: true,
+            includeHistory: true,
+            includeRegional: Math.random() < 0.4,
+            includeConsistency: Math.random() < 0.6,
+            performanceWeight:
+              SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.PERFORMANCE,
+            historyWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.HISTORY,
+            regionalWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.REGIONAL,
+            consistencyWeight:
+              SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.CONSISTENCY,
+            ratingWeight: SEED_CONFIG.SEEDING.PERFORMANCE_WEIGHTS.RATING,
+            recentTournaments: randomInt(
+              SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[0],
+              SEED_CONFIG.SEEDING.RECENT_TOURNAMENTS_RANGE[1]
+            ),
+            regionalRadius: randomInt(
+              SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[0],
+              SEED_CONFIG.SEEDING.REGIONAL_RADIUS_RANGE[1]
+            ),
+          },
+        },
+        bracket: {}, // Will be generated by BracketGenerationService
+      },
+    });
+    tournaments.push(tournament);
+  }
+
+  return tournaments;
+}
+
+// Bracket generation is now handled by BracketGenerationService.generateBracket()
+
+async function createTournamentPlayers(tournaments: any[], users: any[]) {
+  const tournamentPlayers: any[] = [];
+  const regularUsers = users.filter((u) => u.role === "user");
+
+  for (const tournament of tournaments) {
+    const playerCount = Math.min(
+      tournament.currentPlayers,
+      regularUsers.length
+    );
+    const selectedUsers = regularUsers.slice(0, playerCount);
+
+    for (let i = 0; i < selectedUsers.length; i++) {
+      const user = selectedUsers[i];
+      const isEliminated =
+        tournament.status === "COMPLETED" && Math.random() < 0.7;
+      const placement =
+        tournament.status === "COMPLETED" && !isEliminated
+          ? randomInt(1, Math.min(10, playerCount))
+          : null;
+      const prizeWon =
+        placement && placement <= 6
+          ? (tournament.prizeBreakdown as any)[placement.toString()] || 0
+          : 0;
+
+      const tournamentPlayer = await prisma.tournamentPlayer.create({
+        data: {
+          userId: user.id,
+          tournamentId: tournament.id,
+          registeredAt: randomDate(
+            tournament.registrationStart,
+            tournament.registrationEnd
+          ),
+          joinedAt: randomDate(
+            tournament.registrationStart,
+            tournament.registrationEnd
+          ),
+          isActive: true,
+          seedNumber: i + 1,
+          currentRound:
+            tournament.status === "ACTIVE"
+              ? randomInt(1, 3)
+              : tournament.status === "COMPLETED"
+              ? 6
+              : 1,
+          isEliminated,
+          placement,
+          prizeWon,
+        },
       });
+      tournamentPlayers.push(tournamentPlayer);
     }
   }
 
-  await prisma.payment.createMany({ data: payments });
+  return tournamentPlayers;
+}
 
-  // 9. Create matches for in-progress and completed tournaments
-  console.log("⚔️ Creating tournament matches...");
-  const matches: any[] = [];
+async function createMatches(tournaments: any[], users: any[]) {
+  const matches = [];
+  const regularUsers = users.filter((u) => u.role === "user");
 
-  for (const tournament of createdTournaments) {
-    if (
-      tournament.status === TournamentStatus.ACTIVE ||
-      tournament.status === TournamentStatus.COMPLETED
-    ) {
-      const tournamentPlayers = await prisma.tournamentPlayer.findMany({
-        where: { tournamentId: tournament.id },
-        include: { user: true },
-      });
+  for (const tournament of tournaments) {
+    const players = await prisma.tournamentPlayer.findMany({
+      where: { tournamentId: tournament.id },
+      include: { user: true },
+    });
 
-      // Create some matches
-      for (let i = 0; i < tournamentPlayers.length - 1; i += 2) {
-        if (i + 1 < tournamentPlayers.length) {
-          const player1 = tournamentPlayers[i];
-          const player2 = tournamentPlayers[i + 1];
+    if (players.length >= 2) {
+      const matchCount = Math.min(
+        SEED_CONFIG.MATCHES.PER_TOURNAMENT,
+        Math.floor(players.length / 2)
+      );
 
-          matches.push({
-            player1Id: player1.userId,
-            player2Id: player2.userId,
-            gameId: tournament.gameId,
-            tournamentId: tournament.id,
-            round: 1,
-            status:
-              tournament.status === TournamentStatus.COMPLETED
-                ? MatchStatus.COMPLETED
-                : Math.random() < 0.5
-                ? MatchStatus.ACTIVE
-                : MatchStatus.COMPLETED,
-            result:
-              tournament.status === TournamentStatus.COMPLETED
-                ? Math.random() < 0.5
-                  ? MatchResult.PLAYER1_WIN
-                  : MatchResult.PLAYER2_WIN
-                : Math.random() < 0.3
-                ? MatchResult.PLAYER1_WIN
-                : Math.random() < 0.6
-                ? MatchResult.PLAYER2_WIN
-                : MatchResult.PENDING,
-            winnerId: null, // Will be set based on result
-            duration: Math.floor(Math.random() * 1800) + 300, // 5-35 minutes
-            createdAt: randomDate(
-              tournament.startDate,
-              tournament.endDate || new Date()
-            ),
-            startedAt: randomDate(
-              tournament.startDate,
-              tournament.endDate || new Date()
-            ),
-            finishedAt:
-              tournament.status === TournamentStatus.COMPLETED
+      for (let i = 0; i < matchCount; i++) {
+        const player1 = players[i * 2];
+        const player2 = players[i * 2 + 1];
+
+        if (player1 && player2) {
+          const isCompleted =
+            Math.random() < SEED_CONFIG.MATCHES.COMPLETED_PERCENTAGE;
+          const result = isCompleted
+            ? randomChoice(["PLAYER1_WIN", "PLAYER2_WIN", "DRAW"])
+            : "PENDING";
+          const winnerId =
+            result === "PLAYER1_WIN"
+              ? player1.userId
+              : result === "PLAYER2_WIN"
+              ? player2.userId
+              : null;
+
+          const match = await prisma.match.create({
+            data: {
+              player1Id: player1.userId,
+              player2Id: player2.userId,
+              gameId: tournament.gameId,
+              tournamentId: tournament.id,
+              round: randomInt(1, 6),
+              status: isCompleted
+                ? "COMPLETED"
+                : randomChoice(["PENDING", "ACTIVE"]),
+              result: result as any,
+              winnerId,
+              gameData: {
+                moves: generateGameMoves(tournament.gameId),
+                finalPosition: generateFinalPosition(tournament.gameId),
+                timeControl: randomChoice(SEED_CONFIG.CHESS.TIME_CONTROLS),
+                opening: randomChoice(SEED_CONFIG.CHESS.OPENINGS),
+              },
+              duration: randomInt(300, 3600), // 5 minutes to 1 hour
+              createdAt: randomDate(
+                tournament.startDate,
+                tournament.endDate || new Date()
+              ),
+              startedAt: isCompleted
                 ? randomDate(
                     tournament.startDate,
                     tournament.endDate || new Date()
                   )
                 : null,
+              finishedAt: isCompleted
+                ? randomDate(
+                    tournament.startDate,
+                    tournament.endDate || new Date()
+                  )
+                : null,
+            },
           });
+          matches.push(match);
         }
       }
     }
   }
 
-  const createdMatches = await Promise.all(
-    matches.map((match) => {
-      // Set winnerId based on result
-      if (match.result === MatchResult.PLAYER1_WIN) {
-        match.winnerId = match.player1Id;
-      } else if (match.result === MatchResult.PLAYER2_WIN) {
-        match.winnerId = match.player2Id;
-      }
-      return prisma.match.create({ data: match });
-    })
-  );
+  return matches;
+}
 
-  // 10. Create game statistics
-  console.log("📊 Creating game statistics...");
-  const gameStats: any[] = [];
+function generateGameMoves(gameId: string): string[] {
+  const moveCount = randomInt(10, 50);
+  const moves = [];
 
-  for (const user of createdUsers.slice(1)) {
-    // Skip admin
-    for (const game of createdGames) {
-      const gamesPlayed = Math.floor(Math.random() * 50) + 10;
-      const gamesWon = Math.floor(gamesPlayed * (0.2 + Math.random() * 0.6));
-      const gamesLost = gamesPlayed - gamesWon;
+  // Chess-specific moves with common openings and tactics
+  const chessMoves = [
+    // Common opening moves
+    "e4",
+    "e5",
+    "Nf3",
+    "Nc6",
+    "Bb5",
+    "a6",
+    "Ba4",
+    "Nf6",
+    "O-O",
+    "d4",
+    "exd4",
+    "Nxd4",
+    "Nf6",
+    "e5",
+    "Ne4",
+    "d6",
+    "Nf3",
+    "Nc6",
+    "Bc4",
+    "Be7",
+    "O-O",
+    "O-O",
+    "Re1",
+    "b5",
+    // Middle game moves
+    "Nxe5",
+    "Nxe5",
+    "Qd5",
+    "Qd5",
+    "Nxf7",
+    "Kxf7",
+    "Qxd5",
+    "Nxd5",
+    "Bxf7",
+    "Kxf7",
+    "Qd5",
+    "Qd5",
+    "Nxe5",
+    "Nxe5",
+    "Qd5",
+    "Qd5",
+    "Nxf7",
+    "Kxf7",
+    "Qxd5",
+    "Nxd5",
+    // Endgame moves
+    "Kf1",
+    "Kf8",
+    "Ke2",
+    "Ke7",
+    "Kd3",
+    "Kd6",
+    "Kc4",
+    "Kc5",
+    "Kb5",
+    "Kb4",
+    "Ka6",
+    "Ka3",
+  ];
 
-      gameStats.push({
+  for (let i = 0; i < moveCount; i++) {
+    moves.push(randomChoice(chessMoves));
+  }
+
+  return moves;
+}
+
+function generateFinalPosition(gameId: string): string {
+  // Chess-specific final positions representing common endgame scenarios
+  const chessPositions = [
+    "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR", // Starting position
+    "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR", // After e4
+    "rnbqkbnr/pppp1ppp/2p5/4p3/4P3/8/PPPP1PPP/RNBQKBNR", // After e4 e5
+    "rnbqkbnr/pppp1ppp/2p5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R", // After e4 e5 Nf3
+    "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R", // After e4 e5 Nf3 Nc6
+    "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R", // After e4 e5 Nf3 Nc6 Bb5
+    "r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R", // After e4 e5 Nf3 Nc6 Bb5 a6
+  ];
+
+  return randomChoice(chessPositions);
+}
+
+async function createGameSessions(matches: any[], users: any[], games: any[]) {
+  const gameSessions = [];
+
+  for (const match of matches) {
+    if (match.status === "COMPLETED") {
+      const session = await prisma.gameSession.create({
+        data: {
+          userId: match.player1Id,
+          gameId: match.gameId,
+          sessionType: "TOURNAMENT",
+          opponentId: match.player2Id,
+          isActive: false,
+          gameState: match.gameData,
+          moves: [match.gameData.moves],
+          result: match.result,
+          score:
+            match.result === "PLAYER1_WIN"
+              ? 1
+              : match.result === "PLAYER2_WIN"
+              ? 0
+              : 0.5,
+          duration: match.duration,
+          matchId: match.id,
+          createdAt: match.createdAt,
+          startedAt: match.startedAt,
+          finishedAt: match.finishedAt,
+        },
+      });
+      gameSessions.push(session);
+
+      // Create session for player 2
+      const session2 = await prisma.gameSession.create({
+        data: {
+          userId: match.player2Id,
+          gameId: match.gameId,
+          sessionType: "TOURNAMENT",
+          opponentId: match.player1Id,
+          isActive: false,
+          gameState: match.gameData,
+          moves: [match.gameData.moves],
+          result:
+            match.result === "PLAYER1_WIN"
+              ? "PLAYER2_WIN"
+              : match.result === "PLAYER2_WIN"
+              ? "PLAYER1_WIN"
+              : "DRAW",
+          score:
+            match.result === "PLAYER2_WIN"
+              ? 1
+              : match.result === "PLAYER1_WIN"
+              ? 0
+              : 0.5,
+          duration: match.duration,
+          matchId: match.id,
+          createdAt: match.createdAt,
+          startedAt: match.startedAt,
+          finishedAt: match.finishedAt,
+        },
+      });
+      gameSessions.push(session2);
+    }
+  }
+
+  return gameSessions;
+}
+
+async function createGameStatistics(users: any[], games: any[]) {
+  const gameStatistics = [];
+  const regularUsers = users.filter((u) => u.role === "user");
+
+  for (const user of regularUsers) {
+    // Create statistics for Chess only
+    const game = games[0]; // Chess game
+    const gamesPlayed = randomInt(20, 100);
+    const gamesWon = Math.floor(gamesPlayed * (user.winRate / 100));
+    const gamesLost = gamesPlayed - gamesWon;
+    const gamesDrawn = Math.floor(Math.random() * 5);
+    const totalPlayTime = gamesPlayed * (game.averageTimeMs / 1000);
+    const currentRating = user.points + randomInt(-100, 100);
+    const peakRating = currentRating + randomInt(0, 200);
+
+    const stat = await prisma.gameStatistic.create({
+      data: {
         userId: user.id,
         gameId: game.id,
         gamesPlayed,
         gamesWon,
         gamesLost,
-        gamesDrawn: Math.floor(Math.random() * 5),
-        winRate: gamesWon / gamesPlayed,
-        averageScore: Math.floor(Math.random() * 100) + 50,
-        bestScore: Math.floor(Math.random() * 200) + 100,
-        totalPlayTime: gamesPlayed * Math.floor(game.averageTimeMs / 1000),
-        currentRating: Math.floor(Math.random() * 800) + 1000,
-        peakRating: Math.floor(Math.random() * 1000) + 1200,
-      });
-    }
+        gamesDrawn,
+        winRate: parseFloat(((gamesWon / gamesPlayed) * 100).toFixed(1)),
+        averageScore: parseFloat((gamesWon * 3 + gamesDrawn * 1).toFixed(1)),
+        bestScore: gamesWon * 3,
+        totalPlayTime: Math.floor(totalPlayTime),
+        currentRating,
+        peakRating,
+      },
+    });
+    gameStatistics.push(stat);
   }
 
-  await prisma.gameStatistic.createMany({ data: gameStats });
+  return gameStatistics;
+}
 
-  // 11. Create achievements
-  console.log("🏅 Creating achievements...");
-  const achievements = [
-    {
-      name: "First Steps",
-      description: "Complete your first game",
-      icon: "🎯",
-      type: AchievementType.SPECIAL,
-      requirements: { gamesPlayed: 1 },
-      points: 25,
-    },
+async function createAchievements() {
+  const achievementsData = [
     {
       name: "First Victory",
       description: "Win your first game",
-      icon: "🎉",
-      type: AchievementType.SPECIAL,
+      icon: "🏆",
+      type: "GAMES_WON" as const,
       requirements: { gamesWon: 1 },
+      points: 10,
+    },
+    {
+      name: "Victory Streak",
+      description: "Win 5 games in a row",
+      icon: "🔥",
+      type: "WIN_STREAK" as const,
+      requirements: { winStreak: 5 },
       points: 50,
     },
     {
-      name: "Chess Master",
-      description: "Win 25 chess games",
-      icon: "♟️",
-      type: AchievementType.SPECIAL,
-      requirements: { gamesWon: 25, gameType: "Chess" },
-      points: 200,
-    },
-    {
-      name: "Checkers Champion",
-      description: "Win 20 checkers games",
-      icon: "🔴",
-      type: AchievementType.SPECIAL,
-      requirements: { gamesWon: 20, gameType: "Checkers" },
-      points: 180,
-    },
-    {
-      name: "Quick Draw",
-      description: "Win 15 Tic Tac Toe games",
-      icon: "⚡",
-      type: AchievementType.SPECIAL,
-      requirements: { gamesWon: 15, gameType: "Tic Tac Toe" },
+      name: "Tournament Champion",
+      description: "Win a tournament",
+      icon: "👑",
+      type: "TOURNAMENTS_WON" as const,
+      requirements: { tournamentsWon: 1 },
       points: 100,
     },
     {
-      name: "Connect Master",
-      description: "Win 18 Connect 4 games",
-      icon: "🔵",
-      type: AchievementType.SPECIAL,
-      requirements: { gamesWon: 18, gameType: "Connect 4" },
-      points: 150,
-    },
-    {
-      name: "Tournament Warrior",
-      description: "Participate in 5 tournaments",
-      icon: "⚔️",
-      type: AchievementType.PARTICIPATION,
-      requirements: { tournamentsJoined: 5 },
-      points: 300,
-    },
-    {
-      name: "Tournament Champion",
-      description: "Win your first tournament",
-      icon: "🏆",
-      type: AchievementType.TOURNAMENTS_WON,
-      requirements: { tournamentsWon: 1 },
-      points: 500,
-    },
-    {
-      name: "Tournament Legend",
-      description: "Win 3 tournaments",
-      icon: "👑",
-      type: AchievementType.TOURNAMENTS_WON,
-      requirements: { tournamentsWon: 3 },
-      points: 1000,
-    },
-    {
-      name: "Zimbabwe Pride",
-      description: "Represent Zimbabwe in 10 tournaments",
-      icon: "🇿🇼",
-      type: AchievementType.PARTICIPATION,
-      requirements: { tournamentsJoined: 10 },
-      points: 400,
-    },
-    {
-      name: "Rising Star",
-      description: "Reach 1400 rating",
+      name: "Rating Master",
+      description: "Reach a rating of 2000",
       icon: "⭐",
-      type: AchievementType.RATING_MILESTONE,
-      requirements: { rating: 1400 },
-      points: 350,
-    },
-    {
-      name: "Expert Player",
-      description: "Reach 1600 rating",
-      icon: "🌟",
-      type: AchievementType.RATING_MILESTONE,
-      requirements: { rating: 1600 },
-      points: 500,
-    },
-    {
-      name: "Master Player",
-      description: "Reach 1800 rating",
-      icon: "💫",
-      type: AchievementType.RATING_MILESTONE,
-      requirements: { rating: 1800 },
-      points: 750,
-    },
-    {
-      name: "Win Streak",
-      description: "Win 5 games in a row",
-      icon: "🔥",
-      type: AchievementType.WIN_STREAK,
-      requirements: { winStreak: 5 },
+      type: "RATING_MILESTONE" as const,
+      requirements: { rating: 2000 },
       points: 200,
     },
     {
-      name: "Dedication",
+      name: "Dedicated Player",
       description: "Play 100 games",
-      icon: "💪",
-      type: AchievementType.SPECIAL,
+      icon: "🎮",
+      type: "PARTICIPATION" as const,
       requirements: { gamesPlayed: 100 },
-      points: 400,
+      points: 75,
+    },
+    {
+      name: "Chess Grandmaster",
+      description: "Achieve grandmaster status in chess",
+      icon: "♟️",
+      type: "SPECIAL" as const,
+      requirements: { chessRating: 2500, gamesWon: 100 },
+      points: 500,
     },
   ];
 
-  await prisma.achievement.createMany({ data: achievements });
-
-  // 12. Create tournament chat messages
-  console.log("💬 Creating tournament chat messages...");
-  const chatMessages: any[] = [];
-
-  for (const tournament of createdTournaments.slice(0, 10)) {
-    // Add chat to first 10 tournaments
-    const tournamentPlayers = await prisma.tournamentPlayer.findMany({
-      where: { tournamentId: tournament.id },
-      take: 5, // Get first 5 players
+  const achievements = [];
+  for (const achievementData of achievementsData) {
+    const achievement = await prisma.achievement.create({
+      data: achievementData,
     });
+    achievements.push(achievement);
+  }
+  return achievements;
+}
 
-    const sampleMessages = [
-      "Good luck everyone! 🎮",
-      "May the best player win! 💪",
-      "Let's have a great tournament! 🏆",
-      "Looking forward to some exciting matches! ⚡",
-      "Best of luck to all participants! 🌟",
-      "This should be an amazing tournament! 🎯",
-      "Ready to give it my all! 🔥",
-      "Great to see so many skilled players here! 👥",
-      "Let's play fair and have fun! 🎲",
-      "Tournament time! Let's do this! 🚀",
-    ];
+async function createUserAchievements(users: any[], achievements: any[]) {
+  const userAchievements = [];
+  const regularUsers = users.filter((u) => u.role === "user");
 
-    for (let i = 0; i < Math.min(5, tournamentPlayers.length); i++) {
-      const player = tournamentPlayers[i];
-      const messageTime = randomDate(
-        tournament.registrationStart,
-        tournament.startDate
-      );
+  for (const user of regularUsers) {
+    const userAchievementCount = randomInt(1, 4);
+    const selectedAchievements = achievements.slice(0, userAchievementCount);
 
-      chatMessages.push({
-        tournamentId: tournament.id,
-        userId: player.userId,
-        text: sampleMessages[Math.floor(Math.random() * sampleMessages.length)],
-        createdAt: messageTime,
+    for (const achievement of selectedAchievements) {
+      const userAchievement = await prisma.userAchievement.create({
+        data: {
+          userId: user.id,
+          achievementId: achievement.id,
+          unlockedAt: randomDate(
+            new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
+            new Date()
+          ),
+        },
       });
+      userAchievements.push(userAchievement);
     }
   }
 
-  await prisma.tournamentChatMessage.createMany({ data: chatMessages });
+  return userAchievements;
+}
 
-  // Update tournament current players count
-  console.log("📊 Updating tournament player counts...");
-  for (const tournament of createdTournaments) {
-    const playerCount = await prisma.tournamentPlayer.count({
+async function createPayments(users: any[], tournaments: any[]) {
+  const payments = [];
+  const regularUsers = users.filter((u) => u.role === "user");
+
+  for (const tournament of tournaments) {
+    const players = await prisma.tournamentPlayer.findMany({
+      where: { tournamentId: tournament.id },
+      include: { user: true },
+    });
+
+    // Create entry fee payments
+    for (const player of players) {
+      const isSuccessful = Math.random() < SEED_CONFIG.PAYMENTS.SUCCESS_RATE;
+      const status = isSuccessful
+        ? "COMPLETED"
+        : randomChoice(["FAILED", "PENDING", "CANCELLED"]);
+      const failureReason = !isSuccessful
+        ? randomChoice(SEED_CONFIG.PAYMENTS.FAILURE_REASONS)
+        : null;
+
+      const payment = await prisma.payment.create({
+        data: {
+          userId: player.userId,
+          tournamentId: tournament.id,
+          amount: tournament.entryFee,
+          currency: tournament.localCurrency,
+          type: "ENTRY_FEE",
+          status: status as any,
+          pesePayTransactionId: isSuccessful
+            ? `pese_${Date.now()}_${player.userId}`
+            : null,
+          pesePayReference: `ref_${tournament.id}_${player.userId}`,
+          paymentMethodCode: randomChoice(["ECOCASH", "ONEMONEY", "TELECASH"]),
+          mobileMoneyNumber: player.user.ecocashNumber,
+          paymentInitiatedAt: randomDate(
+            tournament.registrationStart,
+            tournament.registrationEnd
+          ),
+          paymentConfirmedAt: isSuccessful
+            ? randomDate(
+                tournament.registrationStart,
+                tournament.registrationEnd
+              )
+            : null,
+          paymentFailedAt: !isSuccessful
+            ? randomDate(
+                tournament.registrationStart,
+                tournament.registrationEnd
+              )
+            : null,
+          failureReason,
+          exchangeRate: 1.0,
+          localAmount: tournament.entryFee,
+          localCurrency: tournament.localCurrency,
+          metadata: {
+            tournamentTitle: tournament.title,
+            playerUsername: player.user.username,
+            paymentMethod: "Mobile Money",
+          },
+        },
+      });
+      payments.push(payment);
+    }
+
+    // Create prize payments for completed tournaments
+    if (tournament.status === "COMPLETED") {
+      const prizeBreakdown = tournament.prizeBreakdown as any;
+      for (
+        let i = 0;
+        i < Math.min(players.length, Object.keys(prizeBreakdown).length);
+        i++
+      ) {
+        const placement = i + 1;
+        const prizeKey = Object.keys(prizeBreakdown)[i];
+        const prizeAmount = prizeBreakdown[prizeKey];
+
+        if (prizeAmount > 0) {
+          const payment = await prisma.payment.create({
+            data: {
+              userId: players[i].userId,
+              tournamentId: tournament.id,
+              amount: prizeAmount,
+              currency: tournament.localCurrency,
+              type: "PRIZE_PAYOUT",
+              status: "COMPLETED",
+              pesePayTransactionId: `pese_prize_${Date.now()}_${
+                players[i].userId
+              }`,
+              pesePayReference: `ref_prize_${tournament.id}_${players[i].userId}`,
+              paymentMethodCode: "ECOCASH",
+              mobileMoneyNumber: players[i].user.ecocashNumber,
+              paymentInitiatedAt: randomDate(
+                tournament.endDate || new Date(),
+                new Date()
+              ),
+              paymentConfirmedAt: randomDate(
+                tournament.endDate || new Date(),
+                new Date()
+              ),
+              exchangeRate: 1.0,
+              localAmount: prizeAmount,
+              localCurrency: tournament.localCurrency,
+              metadata: {
+                tournamentTitle: tournament.title,
+                placement,
+                prizeType: prizeKey,
+              },
+            },
+          });
+          payments.push(payment);
+        }
+      }
+    }
+  }
+
+  return payments;
+}
+
+async function createMatchmakingQueue(users: any[], games: any[]) {
+  const matchmakingQueue = [];
+  const regularUsers = users.filter((u) => u.role === "user");
+
+  for (const user of regularUsers) {
+    if (Math.random() < 0.3) {
+      // 30% of users are in queue
+      const queueEntry = await prisma.matchmakingQueue.create({
+        data: {
+          userId: user.id,
+          gameType: "Chess",
+          rating: user.points,
+          status: randomChoice(["waiting", "matched", "cancelled"]),
+        },
+      });
+      matchmakingQueue.push(queueEntry);
+    }
+  }
+
+  return matchmakingQueue;
+}
+
+async function createMatchmakingMetrics(games: any[]) {
+  const matchmakingMetrics = [];
+
+  // Create metrics for Chess only
+  const today = new Date();
+  for (let i = 0; i < 30; i++) {
+    // Last 30 days
+    const date = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
+
+    const metrics = await prisma.matchmakingMetrics.create({
+      data: {
+        gameType: "Chess",
+        date,
+        averageWaitTime: randomInt(15, 120), // 15 seconds to 2 minutes
+        totalMatches: randomInt(50, 500),
+        aiMatches: randomInt(10, 100),
+        humanMatches: randomInt(40, 400),
+        averageRatingDifference: randomInt(50, 200),
+        peakConcurrentUsers: randomInt(100, 1000),
+      },
+    });
+    matchmakingMetrics.push(metrics);
+  }
+
+  return matchmakingMetrics;
+}
+
+async function createTournamentEvents(tournaments: any[], users: any[]) {
+  const tournamentEvents = [];
+  const regularUsers = users.filter((u) => u.role === "user");
+
+  for (const tournament of tournaments) {
+    const players = await prisma.tournamentPlayer.findMany({
       where: { tournamentId: tournament.id },
     });
 
-    await prisma.tournament.update({
-      where: { id: tournament.id },
-      data: { currentPlayers: playerCount },
+    // Create player joined events
+    for (const player of players.slice(0, 5)) {
+      const event = await prisma.tournamentEvent.create({
+        data: {
+          tournamentId: tournament.id,
+          userId: player.userId,
+          type: "player_joined",
+          message: "joined the tournament",
+          metadata: {
+            playerName: users.find((u) => u.id === player.userId)?.username,
+            timestamp: player.joinedAt,
+          },
+        },
+      });
+      tournamentEvents.push(event);
+    }
+
+    // Create match result events
+    const matches = await prisma.match.findMany({
+      where: { tournamentId: tournament.id },
     });
+
+    for (const match of matches.slice(0, 3)) {
+      const winner =
+        match.result === "PLAYER1_WIN" ? match.player1Id : match.player2Id;
+      const loser =
+        match.result === "PLAYER1_WIN" ? match.player2Id : match.player1Id;
+
+      const event = await prisma.tournamentEvent.create({
+        data: {
+          tournamentId: tournament.id,
+          userId: winner,
+          type: "match_result",
+          message: "defeated",
+          metadata: {
+            opponent: users.find((u) => u.id === loser)?.username,
+            score: "1-0",
+            matchId: match.id,
+          },
+        },
+      });
+      tournamentEvents.push(event);
+    }
   }
 
-  console.log("✅ Comprehensive Zimbabwe gaming platform seeded successfully!");
-  console.log(`📈 Created:`);
-  console.log(`   - ${locations.length} Zimbabwe locations`);
-  console.log(`   - ${institutions.length} institutions`);
-  console.log(`   - ${mobileMoneyProviders.length} mobile money providers`);
-  console.log(`   - ${createdGames.length} games`);
-  console.log(`   - ${createdUsers.length} users`);
-  console.log(`   - ${createdTournaments.length} tournaments`);
-  console.log(`   - ${tournamentPlayers.length} tournament registrations`);
-  console.log(`   - ${payments.length} payments`);
-  console.log(`   - ${createdMatches.length} matches`);
-  console.log(`   - ${gameStats.length} game statistics records`);
-  console.log(`   - ${achievements.length} achievements`);
-  console.log(`   - ${chatMessages.length} chat messages`);
-
-  console.log("\n🎯 Tournament Status Summary:");
-  const statusCounts = await prisma.tournament.groupBy({
-    by: ["status"],
-    _count: { status: true },
-  });
-
-  statusCounts.forEach(({ status, _count }) => {
-    console.log(`   - ${status}: ${_count.status} tournaments`);
-  });
-
-  console.log("\n🎮 Ready for comprehensive testing!");
-  console.log("   - Check tournaments starting soon for live testing");
-  console.log("   - Multiple tournaments with players for bracket testing");
-  console.log("   - Various tournament states for UI testing");
-  console.log("   - Comprehensive user data for social features");
+  return tournamentEvents;
 }
 
+async function createTournamentHighlights(tournaments: any[], users: any[]) {
+  const tournamentHighlights = [];
+  const regularUsers = users.filter((u) => u.role === "user");
+
+  for (const tournament of tournaments) {
+    const players = await prisma.tournamentPlayer.findMany({
+      where: { tournamentId: tournament.id },
+    });
+
+    for (let i = 0; i < Math.min(players.length, 3); i++) {
+      const player = players[i];
+      const achievements = [
+        "Perfect Game",
+        "Comeback Victory",
+        "Quick Win",
+        "Strategic Masterpiece",
+        "Endgame Excellence",
+      ];
+
+      const highlight = await prisma.tournamentHighlight.create({
+        data: {
+          tournamentId: tournament.id,
+          userId: player.userId,
+          achievement: achievements[i % achievements.length],
+          description: `${achievements[i % achievements.length]} in Round ${
+            i + 1
+          }`,
+        },
+      });
+      tournamentHighlights.push(highlight);
+    }
+  }
+
+  return tournamentHighlights;
+}
+
+async function createTournamentSpectators(tournaments: any[], users: any[]) {
+  const tournamentSpectators = [];
+  const regularUsers = users.filter((u) => u.role === "user");
+
+  for (const tournament of tournaments) {
+    const playerCount = tournament.currentPlayers;
+    const spectatorCount = Math.floor(playerCount * 0.3); // 30% of players are spectators
+
+    for (let i = 0; i < spectatorCount; i++) {
+      const user = regularUsers[i % regularUsers.length];
+      const spectator = await prisma.tournamentSpectator.create({
+        data: {
+          tournamentId: tournament.id,
+          userId: user.id,
+          joinedAt: randomDate(
+            tournament.startDate,
+            tournament.endDate || new Date()
+          ),
+          leftAt:
+            Math.random() < 0.7
+              ? randomDate(
+                  tournament.startDate,
+                  tournament.endDate || new Date()
+                )
+              : null,
+          isActive: Math.random() < 0.8,
+        },
+      });
+      tournamentSpectators.push(spectator);
+    }
+  }
+
+  return tournamentSpectators;
+}
+
+async function createUserActivities(users: any[]) {
+  const userActivities = [];
+  const regularUsers = users.filter((u) => u.role === "user");
+
+  for (const user of regularUsers) {
+    // Login activities
+    for (let i = 0; i < 5; i++) {
+      const activity = await prisma.userActivity.create({
+        data: {
+          userId: user.id,
+          activityType: "login",
+          description: "User logged in",
+          ipAddress: `192.168.1.${randomInt(1, 255)}`,
+          userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          metadata: {
+            location: user.location,
+            device: randomChoice(["desktop", "mobile", "tablet"]),
+          },
+        },
+      });
+      userActivities.push(activity);
+    }
+
+    // Game activities
+    for (let i = 0; i < 3; i++) {
+      const activity = await prisma.userActivity.create({
+        data: {
+          userId: user.id,
+          activityType: "game_played",
+          description: "Played game against opponent",
+          ipAddress: `192.168.1.${randomInt(1, 255)}`,
+          userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          metadata: {
+            gameType: "chess",
+            result: randomChoice(["win", "loss", "draw"]),
+            opponent:
+              regularUsers[randomInt(0, regularUsers.length - 1)].username,
+          },
+        },
+      });
+      userActivities.push(activity);
+    }
+  }
+
+  return userActivities;
+}
+
+async function createFlaggedContent(users: any[]) {
+  const flaggedContent = [];
+  const regularUsers = users.filter((u) => u.role === "user");
+  const adminUsers = users.filter(
+    (u) => u.role === "admin" || u.role === "moderator"
+  );
+
+  const flaggedContentData = [
+    {
+      contentType: "message",
+      contentId: "msg_123",
+      reporterId: regularUsers[0].id,
+      reason: "inappropriate_content",
+      severity: "medium",
+      status: "pending",
+    },
+    {
+      contentType: "profile",
+      contentId: "profile_456",
+      reporterId: regularUsers[1].id,
+      reason: "spam",
+      severity: "low",
+      status: "reviewed",
+      moderatorId: adminUsers[0]?.id,
+      reviewedAt: new Date(),
+      notes: "Profile contains excessive promotional content",
+    },
+  ];
+
+  for (const contentData of flaggedContentData) {
+    const content = await prisma.flaggedContent.create({ data: contentData });
+    flaggedContent.push(content);
+  }
+
+  return flaggedContent;
+}
+
+async function createUserModerations(users: any[]) {
+  const userModerations = [];
+  const regularUsers = users.filter((u) => u.role === "user");
+  const adminUsers = users.filter(
+    (u) => u.role === "admin" || u.role === "moderator"
+  );
+
+  for (let i = 0; i < 3; i++) {
+    const moderation = await prisma.userModeration.create({
+      data: {
+        userId: regularUsers[i].id,
+        moderatorId: adminUsers[0]?.id || regularUsers[0].id,
+        action: randomChoice(["warn", "suspend", "ban"]),
+        reason: randomChoice([
+          "Minor rule violation",
+          "Repeated violations",
+          "Inappropriate behavior",
+        ]),
+        duration: randomChoice([null, 7, 14, 30]),
+        expiresAt: randomChoice([
+          null,
+          new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        ]),
+        isActive: Math.random() < 0.8,
+        notes: "Moderation action taken",
+      },
+    });
+    userModerations.push(moderation);
+  }
+
+  return userModerations;
+}
+
+async function createAuditLogs(users: any[]) {
+  const auditLogs = [];
+  const adminUsers = users.filter(
+    (u) => u.role === "admin" || u.role === "moderator"
+  );
+
+  for (let i = 0; i < 10; i++) {
+    const auditLog = await prisma.auditLog.create({
+      data: {
+        userId: adminUsers[0]?.id || users[0].id,
+        targetType: randomChoice(["user", "tournament", "payment", "match"]),
+        targetId: `target_${i}`,
+        action: randomChoice([
+          "created",
+          "updated",
+          "deleted",
+          "status_changed",
+        ]),
+        previousValue: { status: "active" },
+        newValue: { status: "inactive" },
+        reason: "Administrative action",
+        ipAddress: `192.168.1.${randomInt(100, 200)}`,
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      },
+    });
+    auditLogs.push(auditLog);
+  }
+
+  return auditLogs;
+}
+
+async function createChallengeInvitations(users: any[], games: any[]) {
+  const challengeInvitations = [];
+  const regularUsers = users.filter((u) => u.role === "user");
+
+  for (let i = 0; i < 20; i++) {
+    const challenger = regularUsers[randomInt(0, regularUsers.length - 1)];
+    const challenged = regularUsers[randomInt(0, regularUsers.length - 1)];
+
+    if (challenger.id !== challenged.id) {
+      const challenge = await prisma.challengeInvitation.create({
+        data: {
+          challengerId: challenger.id,
+          challengedId: challenged.id,
+          gameId: games[0].id, // Chess game
+          status: randomChoice(["PENDING", "ACCEPTED", "DECLINED", "EXPIRED"]),
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+        },
+      });
+      challengeInvitations.push(challenge);
+    }
+  }
+
+  return challengeInvitations;
+}
+
+// Execute the seeder
 main()
   .catch((e) => {
     console.error("❌ Seeding failed:", e);
