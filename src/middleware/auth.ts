@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
 import { env } from "../config/environment";
 import { logSecurity } from "../config/logger";
+import { AuthenticatedUser } from "../express";
 
 const prisma = new PrismaClient();
 
@@ -151,7 +152,7 @@ export const authenticate = async (
     });
 
     if (fullUser) {
-      req.user = fullUser as any; // Type assertion to bypass strict typing
+      req.user = fullUser as AuthenticatedUser;
     }
 
     next();
@@ -200,7 +201,7 @@ export const optionalAuth = async (
       });
 
       if (user && user.isActive) {
-        req.user = user as any; // Type assertion to bypass strict typing
+        req.user = user as AuthenticatedUser;
       }
     }
 
