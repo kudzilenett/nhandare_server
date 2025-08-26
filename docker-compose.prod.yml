@@ -1,0 +1,154 @@
+version: "3.8"
+
+services:
+  # PostgreSQL Database (Production)
+  postgres:
+    image: postgres:15-alpine
+    container_name: nhandare_postgres_prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nhandare_gaming
+      POSTGRES_USER: ${POSTGRES_USER:-nhandare_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+      - ./prisma/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432" # Only accessible from localhost
+    networks:
+      - nhandare_prod_network
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-nhandare_user} -d nhandare_gaming",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis for caching and session management (Production)
+  redis:
+    image: redis:7-alpine
+    container_name: nhandare_redis_prod
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_prod_data:/data
+    ports:
+      - "127.0.0.1:6379:6379" # Only accessible from localhost
+    networks:
+      - nhandare_prod_network
+    healthcheck:
+      test:
+        ["CMD", "redis-cli", "--raw", "incr", "ping", "-a", "${REDIS_PASSWORD}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Nhandare Backend (Production)
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: nhandare_backend_prod
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nhandare_user}:${POSTGRES_PASSWORD}@postgres:5432/nhandare_gaming?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRE: ${JWT_EXPIRE:-7d}
+      FRONTEND_URL: ${FRONTEND_URL}
+      ADMIN_PANEL_URL: ${ADMIN_PANEL_URL}
+      SOCKET_CORS_ORIGIN: ${SOCKET_CORS_ORIGIN}
+      PESEPAY_INTEGRATION_KEY: ${PESEPAY_INTEGRATION_KEY}
+      PESEPAY_ENCRYPTION_KEY: ${PESEPAY_ENCRYPTION_KEY}
+      PESEPAY_API_URL: ${PESEPAY_API_URL:-https://api.pesepay.com/api/payments-engine}
+      PESEPAY_ENVIRONMENT: ${PESEPAY_ENVIRONMENT:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-100}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+      CHESS_AI_DIFFICULTY: ${CHESS_AI_DIFFICULTY:-random}
+      TOURNAMENT_MAX_PLAYERS: ${TOURNAMENT_MAX_PLAYERS:-64}
+      DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-USD}
+      SUPPORTED_CURRENCIES: ${SUPPORTED_CURRENCIES:-USD,ZWL}
+      ZIMBABWE_PHONE_PREFIX: ${ZIMBABWE_PHONE_PREFIX:-+263}
+      MIN_TOURNAMENT_ENTRY_FEE: ${MIN_TOURNAMENT_ENTRY_FEE:-1}
+      MAX_TOURNAMENT_ENTRY_FEE: ${MAX_TOURNAMENT_ENTRY_FEE:-100}
+      PLATFORM_FEE_PERCENTAGE: ${PLATFORM_FEE_PERCENTAGE:-0.2}
+      MIN_PRIZE_PAYOUT_PERCENTAGE: ${MIN_PRIZE_PAYOUT_PERCENTAGE:-0.7}
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-5242880}
+      UPLOAD_PATH: ${UPLOAD_PATH:-./uploads}
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - nhandare_prod_network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:3001/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Nginx Reverse Proxy (Production)
+  nginx:
+    image: nginx:alpine
+    container_name: nhandare_nginx_prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ./uploads:/var/www/uploads:ro
+    depends_on:
+      - backend
+    networks:
+      - nhandare_prod_network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_prod_data:
+    driver: local
+  redis_prod_data:
+    driver: local
+
+networks:
+  nhandare_prod_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16

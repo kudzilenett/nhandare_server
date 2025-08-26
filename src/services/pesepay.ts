@@ -28,13 +28,13 @@ axios.create = function (config = {}) {
   return instance;
 };
 
-// NOW import pesepayclient after axios is configured
-import {
-  EncryptPayment,
-  DecriptPayment,
-  InitiatePayment,
-  CheckPayment,
-} from "pesepayclient";
+// Use dynamic imports for pesepayclient to avoid ES module issues
+// const {
+//   EncryptPayment,
+//   DecriptPayment,
+//   InitiatePayment,
+//   CheckPayment,
+// } = require("pesepayclient");
 import {
   PaymentResponse,
   PaymentStatusResponse,
@@ -340,6 +340,8 @@ export class PesePayService {
         integrationKeyLength: INTEGRATION_KEY?.length,
       });
 
+      // Dynamic import to avoid ES module issues
+      const { InitiatePayment } = await import("pesepayclient");
       const transactionDetails = await InitiatePayment(
         paymentBody,
         ENCRYPTION_KEY,
@@ -500,6 +502,8 @@ export class PesePayService {
         integrationKeyLength: INTEGRATION_KEY.length,
       });
 
+      // Dynamic import to avoid ES module issues
+      const { CheckPayment } = await import("pesepayclient");
       const transactionDetails = await CheckPayment(
         referenceNumber,
         ENCRYPTION_KEY,

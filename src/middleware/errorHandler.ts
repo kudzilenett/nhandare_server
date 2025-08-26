@@ -188,7 +188,7 @@ export const globalErrorHandler = (
     method: req.method,
     ip: req.ip,
     userAgent: req.get("User-Agent"),
-    userId: req.user?.id,
+    userId: (req as any).user?.id,
     body: req.body,
     params: req.params,
     query: req.query,

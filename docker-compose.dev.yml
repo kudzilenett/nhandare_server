@@ -1,0 +1,62 @@
+version: "3.8"
+
+services:
+  # PostgreSQL Database (Development)
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    command: postgres -c log_statement=all -c log_min_duration_statement=0
+
+  # Redis (Development)
+  redis:
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+
+  # Backend (Development)
+  backend:
+    build:
+      target: builder-dev
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://nhandare_user:dev_password@postgres:5432/nhandare_gaming?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev-jwt-secret-key-for-development-only
+      LOG_LEVEL: debug
+      RATE_LIMIT_WINDOW_MS: 900000
+      RATE_LIMIT_MAX_REQUESTS: 1000
+      FRONTEND_URL: http://localhost:8081
+      ADMIN_PANEL_URL: http://localhost:3000
+      SOCKET_CORS_ORIGIN: http://localhost:8081
+      PESEPAY_INTEGRATION_KEY: 42bbe2de-5e6c-4350-b16a-2805314ce5cb
+      PESEPAY_ENCRYPTION_KEY: de45125120d645f68c0a9c2ffab06b31
+      PESEPAY_API_URL: https://api.pesepay.com/api/payments-engine
+      PESEPAY_ENVIRONMENT: production
+      DEFAULT_CURRENCY: USD
+      SUPPORTED_CURRENCIES: USD,ZWL
+      ZIMBABWE_PHONE_PREFIX: +263
+      MIN_TOURNAMENT_ENTRY_FEE: 1
+      MAX_TOURNAMENT_ENTRY_FEE: 100
+      PLATFORM_FEE_PERCENTAGE: 0.2
+      MIN_PRIZE_PAYOUT_PERCENTAGE: 0.7
+      CHESS_AI_DIFFICULTY: random
+      TOURNAMENT_MAX_PLAYERS: 64
+      MAX_FILE_SIZE: 5242880
+      UPLOAD_PATH: ./uploads
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    command: npm run dev
+    ports:
+      - "3001:3001"
+      - "9229:9229" # Node.js debug port
+
+volumes:
+  postgres_dev_data:
+    driver: local
