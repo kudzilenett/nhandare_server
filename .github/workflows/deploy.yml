@@ -13,26 +13,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub (if using private registry)
-        # Uncomment and configure if using Docker Hub
-        # uses: docker/login-action@v3
-        # with:
-        #   username: ${{ secrets.DOCKER_USERNAME }}
-        #   password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: false
-          load: true
-          tags: nhandare-backend:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -41,37 +21,102 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           port: ${{ secrets.EC2_PORT }}
           script: |
+            set -e
+
+            echo "🚀 Starting Nhandare Backend deployment..."
+
             # Navigate to project directory
-            cd ~/nhandare_server
+            cd ~/nhandare_server || mkdir -p ~/nhandare_server && cd ~/nhandare_server
+
+            # Clone repository if it doesn't exist
+            if [ ! -d .git ]; then
+              echo "📥 Cloning repository..."
+              git clone https://github.com/kudzilenett/nhandare_server.git .
+            fi
 
             # Pull latest changes
-            git pull origin main
+            echo "📥 Pulling latest changes..."
+            git pull origin main || git pull origin master
 
-            # Stop existing containers
-            docker-compose down
+            # Create necessary directories
+            echo "📁 Creating necessary directories..."
+            mkdir -p uploads logs ssl
+
+            # Set up environment file if it doesn't exist
+            if [ ! -f .env.production ]; then
+              echo "⚙️ Setting up production environment file..."
+              cp env.production.example .env.production
+              echo "⚠️  IMPORTANT: Please edit .env.production with your production values!"
+              echo "⚠️  Deployment will continue with default values for now..."
+            fi
+
+            # Check if Docker is running
+            if ! docker info >/dev/null 2>&1; then
+              echo "🐳 Docker is not running. Starting Docker..."
+              sudo systemctl start docker
+              sudo systemctl enable docker
+            fi
+
+            # Check if docker-compose is available
+            if ! command -v docker-compose &> /dev/null; then
+              echo "🐳 Installing Docker Compose..."
+              sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+            fi
+
+            # Stop existing containers if running
+            echo "🛑 Stopping existing containers..."
+            docker-compose -f docker-compose.prod.yml down 2>/dev/null || true
 
             # Remove old images
+            echo "🧹 Cleaning up old images..."
             docker image prune -f
 
-            # Build new image
-            docker-compose build --no-cache
-
-            # Start services
-            docker-compose up -d
+            # Build and start production services
+            echo "🔨 Building and starting production services..."
+            docker-compose -f docker-compose.prod.yml up -d --build
 
             # Wait for services to be healthy
-            sleep 30
+            echo "⏳ Waiting for services to be healthy..."
+            sleep 90
 
-            # Check health
-            curl -f http://localhost:3001/health || exit 1
+            # Check health with retries
+            echo "🏥 Checking backend health..."
+            max_attempts=5
+            attempt=1
 
-            echo "Deployment completed successfully!"
+            while [ $attempt -le $max_attempts ]; do
+              echo "Attempt $attempt of $max_attempts..."
+              if curl -f http://localhost:3001/health; then
+                echo "✅ Health check passed on attempt $attempt!"
+                break
+              else
+                echo "❌ Health check failed on attempt $attempt"
+                if [ $attempt -eq $max_attempts ]; then
+                  echo "❌ All health check attempts failed"
+                  exit 1
+                fi
+                echo "Waiting 30 seconds before retry..."
+                sleep 30
+                attempt=$((attempt + 1))
+              fi
+            done
 
-      - name: Health Check
+            echo "🎉 Deployment completed successfully!"
+            echo "🌐 Your API is available at: http://$(curl -s ifconfig.me):3001"
+            echo "🏥 Health check: http://$(curl -s ifconfig.me):3001/health"
+
+      - name: Final Health Check
         run: |
-          echo "Waiting for deployment to stabilize..."
-          sleep 60
+          echo "🔍 Performing final health check..."
+          sleep 30
 
           # Test the deployed API
-          curl -f "http://${{ secrets.EC2_HOST }}:3001/health" || exit 1
-          echo "Health check passed!"
+          if curl -f "http://${{ secrets.EC2_HOST }}:3001/health"; then
+            echo "✅ Final health check passed!"
+            echo "🎉 Deployment successful! Your API is live at http://${{ secrets.EC2_HOST }}:3001"
+          else
+            echo "❌ Final health check failed"
+            echo "🔍 Check the deployment logs above for issues"
+            exit 1
+          fi
