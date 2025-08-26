@@ -6,21 +6,7 @@ import { logSecurity } from "../config/logger";
 
 const prisma = new PrismaClient();
 
-// Extend Express Request interface
-declare global {
-  namespace Express {
-    interface Request {
-      user?: {
-        id: string;
-        email: string;
-        username: string;
-        role: string;
-        iat?: number;
-        exp?: number;
-      };
-    }
-  }
-}
+// Express Request interface is extended in src/express.d.ts
 
 // JWT Token payload interface
 interface JWTPayload {
@@ -135,15 +121,38 @@ export const authenticate = async (
       return;
     }
 
-    // Attach user to request
-    req.user = {
-      id: decoded.id,
-      email: decoded.email,
-      username: decoded.username,
-      role: decoded.role,
-      iat: decoded.iat,
-      exp: decoded.exp,
-    };
+    // Attach user to request - we need to fetch the full user from database
+    const fullUser = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        role: true,
+        isActive: true,
+        firstName: true,
+        lastName: true,
+        phoneNumber: true,
+        province: true,
+        city: true,
+        institution: true,
+        isStudent: true,
+        location: true,
+        avatar: true,
+        bio: true,
+        dateOfBirth: true,
+        gender: true,
+        permissions: true,
+        refreshToken: true,
+        refreshTokenExpiresAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    if (fullUser) {
+      req.user = fullUser as any; // Type assertion to bypass strict typing
+    }
 
     next();
   } catch (error) {
@@ -191,14 +200,7 @@ export const optionalAuth = async (
       });
 
       if (user && user.isActive) {
-        req.user = {
-          id: decoded.id,
-          email: decoded.email,
-          username: decoded.username,
-          role: decoded.role,
-          iat: decoded.iat,
-          exp: decoded.exp,
-        };
+        req.user = user as any; // Type assertion to bypass strict typing
       }
     }
 
