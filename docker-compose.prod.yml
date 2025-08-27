@@ -54,8 +54,7 @@ services:
     networks:
       - nhandare_prod_network
     healthcheck:
-      test:
-        ["CMD", "redis-cli", "--raw", "incr", "ping", "-a", "${REDIS_PASSWORD}"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 30s
       timeout: 5s
       retries: 3
