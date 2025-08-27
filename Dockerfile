@@ -66,7 +66,7 @@ ENV PORT=3001
 ENV NODE_ENV=production
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })" || exit 1
+HEALTHCHECK --interval=45s --timeout=15s --start-period=90s --retries=5 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
 
 CMD ["npm", "start"] 
