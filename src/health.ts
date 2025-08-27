@@ -1,9 +1,7 @@
 import { Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
-import Redis from "ioredis";
 
 const prisma = new PrismaClient();
-const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
 
 interface HealthStatus {
   status: "healthy" | "unhealthy";
@@ -12,11 +10,6 @@ interface HealthStatus {
   version: string;
   services: {
     database: {
-      status: "healthy" | "unhealthy";
-      responseTime: number;
-      error?: string;
-    };
-    redis: {
       status: "healthy" | "unhealthy";
       responseTime: number;
       error?: string;
@@ -38,7 +31,6 @@ export const healthCheck = async (req: Request, res: Response) => {
     version: process.env.npm_package_version || "1.0.0",
     services: {
       database: { status: "unhealthy", responseTime: 0 },
-      redis: { status: "unhealthy", responseTime: 0 },
       memory: { used: 0, total: 0, percentage: 0 },
     },
   };
@@ -53,20 +45,6 @@ export const healthCheck = async (req: Request, res: Response) => {
     healthStatus.services.database.status = "unhealthy";
     healthStatus.services.database.responseTime = Date.now() - dbStart;
     healthStatus.services.database.error =
-      error instanceof Error ? error.message : "Unknown error";
-    healthStatus.status = "unhealthy";
-  }
-
-  // Check Redis health
-  const redisStart = Date.now();
-  try {
-    await redis.ping();
-    healthStatus.services.redis.status = "healthy";
-    healthStatus.services.redis.responseTime = Date.now() - redisStart;
-  } catch (error) {
-    healthStatus.services.redis.status = "unhealthy";
-    healthStatus.services.redis.responseTime = Date.now() - redisStart;
-    healthStatus.services.redis.error =
       error instanceof Error ? error.message : "Unknown error";
     healthStatus.status = "unhealthy";
   }
