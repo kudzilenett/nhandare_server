@@ -23,7 +23,7 @@ mkdir -p logs
 mkdir -p uploads
 
 # Check if .env file exists
-if [ ! -f ".env" ]; then
+if [ ! -f ".env.production" ]; then
     echo "⚠️  Warning: .env file not found. Please create it with your production variables."
     echo "Required variables: POSTGRES_PASSWORD, REDIS_PASSWORD, JWT_SECRET"
 fi
