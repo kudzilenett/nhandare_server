@@ -13,7 +13,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-COMPOSE_PROD="docker-compose -f docker-compose.prod.yml"
+COMPOSE_PROD="docker-compose -f docker-compose.prod.yml --env-file .env.production"
 COMPOSE_MON="docker-compose -f docker-compose.monitoring.yml"
 NETWORK_NAME="nhandare_server_nhandare_prod_network"
 
@@ -42,8 +42,8 @@ check_network() {
 }
 
 check_environment() {
-    if [ ! -f .env ]; then
-        log_error ".env file not found! Please create it with your production variables."
+    if [ ! -f .env.production ]; then
+        log_error ".env.production file not found! Please create it with your production variables."
         exit 1
     fi
     

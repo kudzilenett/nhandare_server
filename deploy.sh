@@ -22,15 +22,15 @@ mkdir -p backups
 mkdir -p logs
 mkdir -p uploads
 
-# Check if .env file exists
+# Check if .env.production file exists
 if [ ! -f ".env.production" ]; then
-    echo "⚠️  Warning: .env file not found. Please create it with your production variables."
+    echo "⚠️  Warning: .env.production file not found. Please create it with your production variables."
     echo "Required variables: POSTGRES_PASSWORD, REDIS_PASSWORD, JWT_SECRET"
 fi
 
 # Stop any existing containers
 echo "🛑 Stopping existing containers..."
-docker-compose -f docker-compose.prod.yml down 2>/dev/null || true
+docker-compose -f docker-compose.prod.yml --env-file .env.production down 2>/dev/null || true
 
 # Remove old containers and networks
 echo "🧹 Cleaning up old containers..."
