@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 # Configuration
 COMPOSE_PROD="docker-compose -f docker-compose.prod.yml --env-file .env.production"
 COMPOSE_MON="docker-compose -f docker-compose.monitoring.yml"
-NETWORK_NAME="nhandare_server_nhandare_prod_network"
+NETWORK_NAME="nhandare_prod_network"
 
 # Helper functions
 log_info() {

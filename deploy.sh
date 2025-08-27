@@ -43,7 +43,7 @@ echo "🧹 Cleaning up old containers..."
 docker container prune -f
 docker network prune -f
 
-# Ensure no conflicting containers exist
+l# Ensure no conflicting containers exist
 echo "🧹 Removing any conflicting containers..."
 docker rm -f nhandare_nginx_prod nhandare_backend_prod nhandare_postgres_prod nhandare_redis_prod 2>/dev/null || true
 
