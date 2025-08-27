@@ -37,7 +37,7 @@ log_error() {
 check_network() {
     if ! docker network ls | grep -q "$NETWORK_NAME"; then
         log_info "Creating production network..."
-        docker network create --subnet=172.21.0.0/16 nhandare_prod_network
+        docker network create --subnet=172.21.0.0/16 "$NETWORK_NAME"
     fi
 }
 
@@ -47,11 +47,19 @@ check_environment() {
         exit 1
     fi
     
+    # Source environment variables
+    log_info "Loading environment variables from .env.production..."
+    set -a
+    source .env.production
+    set +a
+    
     # Check required environment variables
     required_vars=("POSTGRES_PASSWORD" "REDIS_PASSWORD" "JWT_SECRET")
     for var in "${required_vars[@]}"; do
         if [ -z "${!var}" ]; then
             log_warning "Environment variable $var is not set"
+        else
+            log_info "✓ $var is set"
         fi
     done
 }

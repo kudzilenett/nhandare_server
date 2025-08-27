@@ -22,10 +22,16 @@ mkdir -p backups
 mkdir -p logs
 mkdir -p uploads
 
-# Check if .env.production file exists
+# Check if .env.production file exists and load it
 if [ ! -f ".env.production" ]; then
     echo "⚠️  Warning: .env.production file not found. Please create it with your production variables."
     echo "Required variables: POSTGRES_PASSWORD, REDIS_PASSWORD, JWT_SECRET"
+    exit 1
+else
+    echo "✅ Loading environment variables from .env.production..."
+    set -a
+    source .env.production
+    set +a
 fi
 
 # Stop any existing containers
@@ -36,6 +42,10 @@ docker-compose -f docker-compose.prod.yml --env-file .env.production down 2>/dev
 echo "🧹 Cleaning up old containers..."
 docker container prune -f
 docker network prune -f
+
+# Ensure no conflicting containers exist
+echo "🧹 Removing any conflicting containers..."
+docker rm -f nhandare_nginx_prod nhandare_backend_prod nhandare_postgres_prod nhandare_redis_prod 2>/dev/null || true
 
 # Start production services
 echo "🚀 Starting production services..."
