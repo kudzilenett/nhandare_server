@@ -73,9 +73,14 @@ jobs:
               sudo chmod +x /usr/local/bin/docker-compose
             fi
 
-            # Stop existing containers if running
-            echo "🛑 Stopping existing containers..."
-            docker-compose -f docker-compose.prod.yml down 2>/dev/null || true
+            # Check if containers are already running and healthy
+            echo "🔍 Checking current container status..."
+            if docker-compose -f docker-compose.prod.yml ps | grep -q "Up.*healthy"; then
+              echo "✅ Containers are already running and healthy. Skipping restart."
+            else
+              echo "🛑 Stopping existing containers..."
+              docker-compose -f docker-compose.prod.yml down 2>/dev/null || true
+            fi
 
             # Remove old images
             echo "🧹 Cleaning up old images..."
@@ -90,6 +95,16 @@ jobs:
             if ! docker-compose -f docker-compose.prod.yml ps | grep -q "Up"; then
               echo "❌ Some containers failed to start. Checking logs..."
               docker-compose -f docker-compose.prod.yml logs --tail=50
+              exit 1
+            fi
+
+            # Quick health check to ensure backend is responding
+            echo "🏥 Quick backend health check..."
+            if curl -f http://localhost:3001/health >/dev/null 2>&1; then
+              echo "✅ Backend is responding to health checks"
+            else
+              echo "❌ Backend is not responding. Checking logs..."
+              docker-compose -f docker-compose.prod.yml logs backend --tail=20
               exit 1
             fi
 
