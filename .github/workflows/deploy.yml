@@ -178,7 +178,7 @@ jobs:
             echo "🌐 Your API is available at: http://$(curl -s ifconfig.me):3001"
             echo "🏥 Health check: http://$(curl -s ifconfig.me):3001/health"
 
-            - name: Final Health Check
+      - name: Final Health Check
         run: |
           echo "🔍 Performing final health check..."
           sleep 45
