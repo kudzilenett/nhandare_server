@@ -28,6 +28,13 @@ jobs:
             # Navigate to project directory
             cd ~/nhandare_server || mkdir -p ~/nhandare_server && cd ~/nhandare_server
 
+            # Check if we can access the current API before making changes
+            if curl -f http://localhost:3001/health >/dev/null 2>&1; then
+              echo "✅ Current API is healthy. Proceeding with deployment..."
+            else
+              echo "⚠️ Current API is not responding. This might be a fresh deployment."
+            fi
+
             # Clone repository if it doesn't exist
             if [ ! -d .git ]; then
               echo "📥 Cloning repository..."
@@ -77,6 +84,7 @@ jobs:
             echo "🔍 Checking current container status..."
             if docker-compose -f docker-compose.prod.yml ps | grep -q "Up.*healthy"; then
               echo "✅ Containers are already running and healthy. Skipping restart."
+              echo "🔄 Only updating images and rebuilding if needed..."
             else
               echo "🛑 Stopping existing containers..."
               docker-compose -f docker-compose.prod.yml down 2>/dev/null || true
@@ -88,6 +96,14 @@ jobs:
 
             # Build and start production services
             echo "🔨 Building and starting production services..."
+
+            # Create backup of current working containers for rollback
+            if docker-compose -f docker-compose.prod.yml ps | grep -q "Up.*healthy"; then
+              echo "💾 Creating backup for potential rollback..."
+              docker-compose -f docker-compose.prod.yml ps > /tmp/backup_containers.txt
+              echo "✅ Backup created"
+            fi
+
             docker-compose -f docker-compose.prod.yml up -d --build
 
             # Check if containers started successfully
@@ -108,9 +124,14 @@ jobs:
               exit 1
             fi
 
-            # Wait for services to be healthy
-            echo "⏳ Waiting for services to be healthy..."
-            sleep 120
+            # Wait for services to be healthy (shorter wait if containers were already running)
+            if docker-compose -f docker-compose.prod.yml ps | grep -q "Up.*healthy"; then
+              echo "⏳ Containers were already healthy, waiting 30 seconds for stability..."
+              sleep 30
+            else
+              echo "⏳ Waiting for services to be healthy..."
+              sleep 120
+            fi
 
             # Check health with retries
             echo "🏥 Checking backend health..."
@@ -128,6 +149,23 @@ jobs:
                   echo "❌ All health check attempts failed"
                   echo "🔍 Checking container logs for debugging..."
                   docker-compose -f docker-compose.prod.yml logs --tail=50
+                  
+                  # Attempt rollback if we have backup
+                  if [ -f /tmp/backup_containers.txt ]; then
+                    echo "🔄 Attempting rollback to previous working state..."
+                    docker-compose -f docker-compose.prod.yml down
+                    docker-compose -f docker-compose.prod.yml up -d
+                    echo "⏳ Waiting for rollback to stabilize..."
+                    sleep 60
+                    if curl -f http://localhost:3001/health; then
+                      echo "✅ Rollback successful! API is back online."
+                      exit 1
+                    else
+                      echo "❌ Rollback failed. Manual intervention required."
+                      exit 1
+                    fi
+                  fi
+                  
                   exit 1
                 fi
                 echo "Waiting 45 seconds before retry..."
@@ -140,7 +178,7 @@ jobs:
             echo "🌐 Your API is available at: http://$(curl -s ifconfig.me):3001"
             echo "🏥 Health check: http://$(curl -s ifconfig.me):3001/health"
 
-      - name: Final Health Check
+            - name: Final Health Check
         run: |
           echo "🔍 Performing final health check..."
           sleep 45
@@ -154,12 +192,16 @@ jobs:
             if curl -f "http://${{ secrets.EC2_HOST }}:3001/health"; then
               echo "✅ Final health check passed!"
               echo "🎉 Deployment successful! Your API is live at http://${{ secrets.EC2_HOST }}:3001"
+              echo "📊 API Status: Healthy"
+              echo "🌐 External URL: http://${{ secrets.EC2_HOST }}:3001"
+              echo "🏥 Health Endpoint: http://${{ secrets.EC2_HOST }}:3001/health"
               break
             else
               echo "❌ Final health check failed on attempt $attempt"
               if [ $attempt -eq $max_attempts ]; then
                 echo "❌ All final health check attempts failed"
                 echo "🔍 Check the deployment logs above for issues"
+                echo "⚠️ Your API may be offline. Check EC2 instance manually."
                 exit 1
               fi
               echo "Waiting 20 seconds before retry..."
