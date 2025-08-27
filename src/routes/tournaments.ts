@@ -417,6 +417,7 @@ router.post(
         userId,
         tournamentId: id,
         isActive: true,
+        seedNumber: tournament._count.players + 1,
       },
     });
 

@@ -153,39 +153,90 @@ async function processPaymentStatusUpdate(
       payment.type === "ENTRY_FEE" &&
       payment.tournamentId
     ) {
-      // Avoid duplicates
-      const existingPlayer = await prisma.tournamentPlayer.findUnique({
-        where: {
-          userId_tournamentId: {
-            userId: payment.userId,
-            tournamentId: payment.tournamentId,
-          },
-        },
-      });
-
-      if (!existingPlayer) {
-        await prisma.tournamentPlayer.create({
-          data: {
-            userId: payment.userId,
-            tournamentId: payment.tournamentId,
-            joinedAt: new Date(),
+      try {
+        // Avoid duplicates
+        const existingPlayer = await prisma.tournamentPlayer.findUnique({
+          where: {
+            userId_tournamentId: {
+              userId: payment.userId,
+              tournamentId: payment.tournamentId,
+            },
           },
         });
 
-        await prisma.tournament.update({
-          where: { id: payment.tournamentId },
-          data: {
-            currentPlayers: { increment: 1 },
-          },
-        });
-        logger.info(
-          "processPaymentStatusUpdate: user registered for tournament",
-          {
-            userId: payment.userId,
-            tournamentId: payment.tournamentId,
-            reference,
-          }
-        );
+        if (!existingPlayer) {
+          // Get current player count to assign next seed number
+          const currentPlayerCount = await prisma.tournamentPlayer.count({
+            where: { tournamentId: payment.tournamentId },
+          });
+
+          await prisma.tournamentPlayer.create({
+            data: {
+              userId: payment.userId,
+              tournamentId: payment.tournamentId,
+              joinedAt: new Date(),
+              seedNumber: currentPlayerCount + 1,
+            },
+          });
+
+          await prisma.tournament.update({
+            where: { id: payment.tournamentId },
+            data: {
+              currentPlayers: { increment: 1 },
+            },
+          });
+          logger.info(
+            "processPaymentStatusUpdate: user registered for tournament",
+            {
+              userId: payment.userId,
+              tournamentId: payment.tournamentId,
+              reference,
+              seedNumber: currentPlayerCount + 1,
+            }
+          );
+        } else {
+          logger.info(
+            "processPaymentStatusUpdate: user already registered for tournament",
+            {
+              userId: payment.userId,
+              tournamentId: payment.tournamentId,
+              reference,
+              existingPlayerId: existingPlayer.id,
+            }
+          );
+        }
+      } catch (registerErr: any) {
+        // Handle duplicate constraint error gracefully
+        if (
+          registerErr?.code === "P2002" &&
+          registerErr?.meta?.target?.includes("userId") &&
+          registerErr?.meta?.target?.includes("tournamentId")
+        ) {
+          logger.info(
+            "processPaymentStatusUpdate: user already registered for tournament (handled duplicate constraint)",
+            {
+              userId: payment.userId,
+              tournamentId: payment.tournamentId,
+              reference,
+              error: registerErr.message,
+            }
+          );
+        } else {
+          // Log other errors but don't fail the entire payment update
+          logger.error(
+            "processPaymentStatusUpdate: error registering user for tournament",
+            {
+              userId: payment.userId,
+              tournamentId: payment.tournamentId,
+              reference,
+              err:
+                registerErr instanceof Error
+                  ? registerErr.message
+                  : registerErr,
+              errorCode: registerErr?.code,
+            }
+          );
+        }
       }
     }
   } catch (err) {
