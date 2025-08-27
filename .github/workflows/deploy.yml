@@ -2,7 +2,7 @@ name: Deploy to EC2
 
 on:
   push:
-    branches: [main, master]
+    branches: [master]
   workflow_dispatch:
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
 
             # Pull latest changes
             echo "📥 Pulling latest changes..."
-            git pull origin main || git pull origin master
+            git pull origin master
 
             # Create necessary directories
             echo "📁 Creating necessary directories..."
@@ -48,6 +48,15 @@ jobs:
               cp env.production.example .env.production
               echo "⚠️  IMPORTANT: Please edit .env.production with your production values!"
               echo "⚠️  Deployment will continue with default values for now..."
+            fi
+
+            # Ensure environment file has correct permissions
+            chmod 600 .env.production
+
+            # Verify environment file exists and is readable
+            if [ ! -r .env.production ]; then
+              echo "❌ Error: .env.production file is not readable"
+              exit 1
             fi
 
             # Check if Docker is running
@@ -76,13 +85,21 @@ jobs:
             echo "🔨 Building and starting production services..."
             docker-compose -f docker-compose.prod.yml up -d --build
 
+            # Check if containers started successfully
+            echo "🔍 Checking container status..."
+            if ! docker-compose -f docker-compose.prod.yml ps | grep -q "Up"; then
+              echo "❌ Some containers failed to start. Checking logs..."
+              docker-compose -f docker-compose.prod.yml logs --tail=50
+              exit 1
+            fi
+
             # Wait for services to be healthy
             echo "⏳ Waiting for services to be healthy..."
-            sleep 90
+            sleep 120
 
             # Check health with retries
             echo "🏥 Checking backend health..."
-            max_attempts=5
+            max_attempts=8
             attempt=1
 
             while [ $attempt -le $max_attempts ]; do
@@ -94,10 +111,12 @@ jobs:
                 echo "❌ Health check failed on attempt $attempt"
                 if [ $attempt -eq $max_attempts ]; then
                   echo "❌ All health check attempts failed"
+                  echo "🔍 Checking container logs for debugging..."
+                  docker-compose -f docker-compose.prod.yml logs --tail=50
                   exit 1
                 fi
-                echo "Waiting 30 seconds before retry..."
-                sleep 30
+                echo "Waiting 45 seconds before retry..."
+                sleep 45
                 attempt=$((attempt + 1))
               fi
             done
@@ -109,14 +128,27 @@ jobs:
       - name: Final Health Check
         run: |
           echo "🔍 Performing final health check..."
-          sleep 30
+          sleep 45
 
-          # Test the deployed API
-          if curl -f "http://${{ secrets.EC2_HOST }}:3001/health"; then
-            echo "✅ Final health check passed!"
-            echo "🎉 Deployment successful! Your API is live at http://${{ secrets.EC2_HOST }}:3001"
-          else
-            echo "❌ Final health check failed"
-            echo "🔍 Check the deployment logs above for issues"
-            exit 1
-          fi
+          # Test the deployed API with retries
+          max_attempts=3
+          attempt=1
+
+          while [ $attempt -le $max_attempts ]; do
+            echo "Final health check attempt $attempt of $max_attempts..."
+            if curl -f "http://${{ secrets.EC2_HOST }}:3001/health"; then
+              echo "✅ Final health check passed!"
+              echo "🎉 Deployment successful! Your API is live at http://${{ secrets.EC2_HOST }}:3001"
+              break
+            else
+              echo "❌ Final health check failed on attempt $attempt"
+              if [ $attempt -eq $max_attempts ]; then
+                echo "❌ All final health check attempts failed"
+                echo "🔍 Check the deployment logs above for issues"
+                exit 1
+              fi
+              echo "Waiting 20 seconds before retry..."
+              sleep 20
+              attempt=$((attempt + 1))
+            fi
+          done

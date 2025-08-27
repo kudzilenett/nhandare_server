@@ -133,10 +133,10 @@ services:
           "--spider",
           "http://localhost:3001/health",
         ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      interval: 45s
+      timeout: 15s
+      retries: 5
+      start_period: 90s
     deploy:
       resources:
         limits:
