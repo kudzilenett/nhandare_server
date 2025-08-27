@@ -34,12 +34,6 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-check_network() {
-    if ! docker network ls | grep -q "$NETWORK_NAME"; then
-        log_info "Creating production network..."
-        docker network create --subnet=172.21.0.0/16 "$NETWORK_NAME"
-    fi
-}
 
 check_environment() {
     if [ ! -f .env.production ]; then
